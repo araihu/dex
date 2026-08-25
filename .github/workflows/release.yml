@@ -166,6 +166,29 @@ jobs:
           sh test/image-overlay_test.sh "$LOCAL_IMAGE"
           scripts/test-image.sh "$LOCAL_IMAGE"
 
+      - name: Build and verify local multi-architecture OCI
+        id: multiarch
+        env:
+          LABELS: ${{ steps.release.outputs.labels }}
+          PLATFORMS: ${{ env.PLATFORMS }}
+          OCI_ARCHIVE: ${{ runner.temp }}/preflight.oci.tar
+        shell: bash
+        run: |
+          set -euo pipefail
+          label_args=()
+          while IFS= read -r label; do
+            test -z "$label" || label_args+=(--label "$label")
+          done <<< "$LABELS"
+          docker buildx build \
+            --platform "$PLATFORMS" \
+            --output "type=oci,dest=$OCI_ARCHIVE" \
+            --provenance=mode=max \
+            --sbom=true \
+            --build-arg "SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}" \
+            "${label_args[@]}" \
+            .
+          scripts/verify-release.sh local "$OCI_ARCHIVE"
+
       - name: Prepare release evidence directory
         id: prepare_evidence
         run: mkdir -p release-evidence

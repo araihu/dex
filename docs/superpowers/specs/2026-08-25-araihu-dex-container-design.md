@@ -302,8 +302,8 @@ Each stable release produces:
 The OCI creation label and BuildKit `SOURCE_DATE_EPOCH` derive from the exact
 release commit's committer timestamp, not the runner wall clock. Trivy is a
 fail-closed `HIGH,CRITICAL` gate and ignores only unfixed findings, with its
-SARIF report retained as release evidence. Evidence collection and upload
-complete before stable aliases are promoted.
+SARIF output limited to those severities and retained as release evidence.
+Evidence collection and upload complete before stable aliases are promoted.
 
 Determinism is scoped to generated frontend bytes and the platform image
 manifests/configuration produced from the locked source and source-derived

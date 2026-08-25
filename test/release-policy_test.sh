@@ -103,6 +103,11 @@ abort 'locked upstream trust verification missing' unless trust['run'].to_s.incl
 verify_local = step(steps, 'verify_local')
 abort 'local OCI verification missing' unless verify_local['run'].to_s.include?('scripts/verify-release.sh local "$RUNNER_TEMP/release.oci.tar"')
 
+multiarch = step(steps, 'multiarch')
+multiarch_run = multiarch['run'].to_s
+abort 'pre-login multi-architecture OCI gate missing' unless multiarch_run.include?('--platform "$PLATFORMS"') && multiarch_run.include?('type=oci,dest=$OCI_ARCHIVE') && multiarch_run.include?('scripts/verify-release.sh local "$OCI_ARCHIVE"')
+abort 'pre-login multi-architecture gate must carry provenance and SBOM' unless multiarch_run.include?('--provenance=mode=max') && multiarch_run.include?('--sbom=true')
+
 scan = step(steps, 'scan')
 abort 'vulnerability scan action missing' unless scan['uses'].start_with?('aquasecurity/trivy-action@')
 abort 'scan report must be retained as SARIF' unless scan.dig('with', 'format') == 'sarif' && scan.dig('with', 'output') == 'release-evidence/vulnerability-report.sarif'
@@ -181,7 +186,7 @@ end
 abort 'release evidence upload must fail on missing files' unless upload.dig('with', 'if-no-files-found') == 'error'
 
 ids = steps.map { |candidate| candidate['id'] }.compact
-%w[trust scan].each do |id|
+%w[trust multiarch scan].each do |id|
   abort "#{id} must run before registry login" unless ids.index(id) < ids.index('login')
 end
 abort 'release evidence directory must be prepared before Trivy scan' unless ids.index('prepare_evidence') < ids.index('scan')
@@ -255,6 +260,8 @@ assert_workflow_rejected trivy_severity 'severity: HIGH,CRITICAL' 'severity: LOW
 assert_workflow_rejected trivy_sarif_severity 'limit-severities-for-sarif: true' 'limit-severities-for-sarif: false'
 assert_workflow_rejected trivy_ignore_unfixed 'ignore-unfixed: true' 'ignore-unfixed: false'
 assert_workflow_rejected evidence_directory 'mkdir -p release-evidence' 'true # evidence directory omitted'
+assert_workflow_rejected multiarch_platform '--platform "$PLATFORMS"' '--platform linux/amd64'
+assert_workflow_rejected multiarch_verify 'scripts/verify-release.sh local "$OCI_ARCHIVE"' 'true # multiarch verification omitted'
 assert_workflow_rejected reproducible_build_arg 'build-args: SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}' 'build-args: SOURCE_DATE_EPOCH=0'
 assert_workflow_rejected signing 'cosign sign --yes "$IMAGE@$DIGEST"' 'true # signature removed'
 assert_workflow_rejected verification 'scripts/verify-release.sh remote "$IMAGE@$DIGEST"' 'true # verification removed'

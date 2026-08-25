@@ -125,8 +125,8 @@ screenshot evidence.
 The OCI creation label and `SOURCE_DATE_EPOCH` come from the release commit's
 committer timestamp, so rerunning a release for the same source does not add a
 wall-clock value. Trivy is a fail-closed `HIGH,CRITICAL` gate; it ignores only
-unfixed findings (`ignore-unfixed: true`) and retains the SARIF report as
-evidence.
+unfixed findings (`ignore-unfixed: true`), limits SARIF to those severities,
+and retains the report as evidence.
 
 Reproducibility covers the generated frontend bytes and platform image
 manifests/configuration. BuildKit provenance and SBOM attestations may carry

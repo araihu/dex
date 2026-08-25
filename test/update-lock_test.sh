@@ -119,7 +119,13 @@ prepare_fake_commands() {
 	write_executable "$bin/npm" \
 		'#!/bin/sh' \
 		'set -eu' \
-		'printf "npm %s\n" "$*" >>"$UPDATE_TEST_LOG"'
+		'printf "npm %s\n" "$*" >>"$UPDATE_TEST_LOG"' \
+		'if [ "$*" = "run generate" ] && [ -n "${FIXTURE_GENERATE_DELETE:-}" ]; then' \
+		'  rm -f -- "$FIXTURE_GENERATE_DELETE"' \
+		'fi' \
+		'if [ "$*" = "run generate" ] && [ "${FIXTURE_GIT_MUTATION:-}" = tag ]; then' \
+		'  git -C "$UPDATE_ROOT" tag update-lock-injected-mutation' \
+		'fi'
 }
 
 prepare_repository() {
@@ -148,13 +154,26 @@ EOF
 	printf '%s\n' '{"name":"fixture","scripts":{"test":"true"}}' >"$root/package.json"
 	printf '%s\n' '{"lockfileVersion":3}' >"$root/package-lock.json"
 	printf '%s\n' 'fixture manifest' >"$root/web/manifest.sha256"
+	printf '%s\n' 'obsolete generated fixture' >"$root/web/obsolete.html"
 	printf '%s\n' '.cache/' 'node_modules/' >"$root/.gitignore"
 	git -C "$root" init -q
 	git -C "$root" config user.name 'Update Lock Test'
 	git -C "$root" config user.email update-lock@example.invalid
 	git -C "$root" add .
 	git -C "$root" commit -qm fixture
+	git -C "$root" tag fixture-tag
+	git -C "$root" remote add fixture https://example.invalid/dex.git
 	printf '%s\n' stale >"$root/.cache/sources/stale"
+}
+
+git_metadata_snapshot() {
+	root=$1
+	{
+		printf 'HEAD\t%s\n' "$(git -C "$root" rev-parse HEAD)"
+		printf 'symbolic-HEAD\t%s\n' "$(git -C "$root" symbolic-ref -q HEAD || printf detached)"
+		git -C "$root" for-each-ref --format='ref\t%(refname)\t%(objectname)'
+		git -C "$root" config --local --get-regexp '^remote\.' 2>/dev/null || :
+	} | LC_ALL=C sort
 }
 
 run_update() {
@@ -236,6 +255,61 @@ prepare_repository "$case_dir/repo" 'header base
 header overlay'
 expect_failure "$case_dir" 'WebAuthn script changed; refresh semantic evidence manually' env
 
+case_dir=$(make_case git-mutation)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+if run_update "$case_dir" env FIXTURE_GIT_MUTATION=tag; then
+	fail 'expected Git metadata mutation to fail preparation'
+fi
+grep -F 'Git HEAD, refs, tags, or remotes changed during preparation' "$case_dir/stderr" >/dev/null || {
+	sed -n '1,120p' "$case_dir/stderr" >&2
+	fail 'missing Git metadata mutation diagnostic'
+}
+[ -z "$(git -C "$case_dir/repo" status --short)" ] || fail 'Git mutation failure changed tracked files'
+git -C "$case_dir/repo" tag -d update-lock-injected-mutation >/dev/null
+
+case_dir=$(make_case changed-update)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+git_metadata_snapshot "$case_dir/repo" >"$case_dir/git-before"
+run_update "$case_dir" env FIXTURE_GENERATE_DELETE=web/obsolete.html
+git_metadata_snapshot "$case_dir/repo" >"$case_dir/git-after"
+cmp -s "$case_dir/git-before" "$case_dir/git-after" ||
+	fail 'successful update mutated Git HEAD, refs, tags, or remotes'
+grep -Fx "DEX_COMMIT=$new_commit" "$case_dir/repo/versions.env" >/dev/null
+grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/versions.env" >/dev/null
+grep -Fx "DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$new_commit.tar.gz" \
+	"$case_dir/repo/versions.env" >/dev/null
+grep -Fx "FROM ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/Dockerfile" >/dev/null
+grep -Fx "dex_commit=$new_commit" "$case_dir/repo/test/fetch-sources_test.sh" >/dev/null
+grep -Fx "upstream='ghcr.io/dexidp/dex:master@$new_digest'" \
+	"$case_dir/repo/test/image-overlay_test.sh" >/dev/null
+[ ! -e "$case_dir/repo/web/obsolete.html" ] || fail 'staged generated deletion was not installed'
+grep -Fx -e "- New commit: \`$new_commit\`" "$case_dir/repo/.cache/update-report.md" >/dev/null
+grep -Fx -e "- New digest: \`$new_digest\`" "$case_dir/repo/.cache/update-report.md" >/dev/null
+[ ! -e "$case_dir/repo/.cache/sources/stale" ] || fail 'changed update preserved stale source-cache content'
+
+for checkpoint in after-files after-web after-cache after-report; do
+	case_dir=$(make_case "install-rollback-$checkpoint")
+	make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+	make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+	prepare_repository "$case_dir/repo" 'header base
+header overlay'
+	printf '%s\n' 'prior report' >"$case_dir/repo/.cache/update-report.md"
+	expect_failure "$case_dir" "injected install failure: $checkpoint" \
+		env FIXTURE_GENERATE_DELETE=web/obsolete.html UPDATE_TEST_INSTALL_FAIL_AT="$checkpoint"
+	[ -e "$case_dir/repo/web/obsolete.html" ] ||
+		fail "rollback after $checkpoint did not restore generated deletion"
+	[ -e "$case_dir/repo/.cache/sources/stale" ] ||
+		fail "rollback after $checkpoint did not restore source cache"
+	grep -Fx 'prior report' "$case_dir/repo/.cache/update-report.md" >/dev/null ||
+		fail "rollback after $checkpoint did not restore prior report"
+done
+
 case_dir=$(make_case no-op)
 printf '%s\n' "$old_commit" >"$case_dir/new-commit"
 printf '%s\n' "$old_digest" >"$case_dir/new-digest"
@@ -272,5 +346,69 @@ grep -F 'gh attestation verify' "$case_dir/commands.log" >/dev/null
 if grep -E '(gh api|docker buildx build|curl |npm |fetch-sources|image-test)' "$case_dir/commands.log" >/dev/null; then
 	fail 'lock-only verification resolved or prepared an update'
 fi
+
+update_workflow=$repo/.github/workflows/update-upstream.yml
+ci_workflow=$repo/.github/workflows/ci.yml
+verify_job=$tmp/update-verify-job.yml
+publish_job=$tmp/update-publish-job.yml
+sed -n '/^  verify:/,/^  publish:/p' "$update_workflow" >"$verify_job"
+sed -n '/^  publish:/,$p' "$update_workflow" >"$publish_job"
+
+grep -Fx 'permissions: {}' "$update_workflow" >/dev/null ||
+	fail 'update workflow must deny permissions by default'
+grep -F 'contents: read' "$verify_job" >/dev/null ||
+	fail 'update verification job lacks read-only contents permission'
+grep -F 'packages: read' "$verify_job" >/dev/null ||
+	fail 'update verification job lacks read-only packages permission'
+if grep -F ': write' "$verify_job" >/dev/null; then
+	fail 'update verification job has write permission'
+fi
+grep -F 'needs: verify' "$publish_job" >/dev/null ||
+	fail 'update publisher does not depend on verified preparation'
+grep -F 'contents: write' "$publish_job" >/dev/null ||
+	fail 'update publisher lacks contents write permission'
+grep -F 'pull-requests: write' "$publish_job" >/dev/null ||
+	fail 'update publisher lacks pull-request write permission'
+
+checkout_count=$(grep -c 'uses: actions/checkout@' "$update_workflow")
+credentialless_count=$(grep -c 'persist-credentials: false' "$update_workflow")
+[ "$checkout_count" -eq 2 ] || fail 'update workflow must check out once per isolated job'
+[ "$credentialless_count" -eq "$checkout_count" ] ||
+	fail 'every update checkout must disable persisted credentials'
+
+grep -F 'uses: actions/download-artifact@' "$publish_job" >/dev/null ||
+	fail 'update publisher does not receive the prepared artifact'
+grep -F 'prepared-update.patch' "$update_workflow" >/dev/null ||
+	fail 'update workflow lacks a prepared patch artifact'
+grep -F 'patch_sha256' "$update_workflow" >/dev/null ||
+	fail 'prepared patch is not checksum-bound'
+grep -F 'metadata_sha256' "$update_workflow" >/dev/null ||
+	fail 'prepared artifact metadata is not checksum-bound'
+grep -F 'EXPECTED_WORKFLOW_COMMIT' "$publish_job" >/dev/null ||
+	fail 'prepared artifact is not bound to the verified workflow commit'
+grep -F 'git apply --check' "$publish_job" >/dev/null ||
+	fail 'update publisher does not validate patch applicability'
+grep -F 'git apply --index' "$publish_job" >/dev/null ||
+	fail 'update publisher does not stage the validated patch'
+
+validation_line=$(grep -n -F -- '- name: Validate prepared update' "$publish_job" | cut -d: -f1)
+credential_line=$(grep -n -F -- '- name: Configure write credentials' "$publish_job" | cut -d: -f1)
+branch_line=$(grep -n -F -- '- name: Create and push update branch' "$publish_job" | cut -d: -f1)
+[ -n "$validation_line" ] && [ -n "$credential_line" ] && [ -n "$branch_line" ] ||
+	fail 'update publisher lifecycle steps are incomplete'
+[ "$validation_line" -lt "$credential_line" ] && [ "$credential_line" -lt "$branch_line" ] ||
+	fail 'write credentials or branch creation precede artifact validation'
+
+grep -F 'contents: read' "$ci_workflow" >/dev/null || fail 'CI lost read-only contents permission'
+grep -F 'packages: read' "$ci_workflow" >/dev/null || fail 'CI lost read-only packages permission'
+if grep -F ': write' "$ci_workflow" >/dev/null; then
+	fail 'CI gained write permission'
+fi
+
+for workflow in "$ci_workflow" "$update_workflow"; do
+	uses_count=$(grep -c '^[[:space:]]*uses:' "$workflow")
+	pinned_count=$(awk '/^[[:space:]]*uses:/ && /@[0-9a-f]{40}[[:space:]]+# v[0-9]/ { count++ } END { print count + 0 }' "$workflow")
+	[ "$uses_count" -eq "$pinned_count" ] || fail "workflow action is not immutably pinned: ${workflow#$repo/}"
+done
 
 printf '%s\n' 'update-lock fixtures: PASS'

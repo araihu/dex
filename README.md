@@ -68,10 +68,13 @@ visual, and accessibility checks pass. It updates local locks, fixtures,
 generated files, and `.cache/update-report.md`; it never commits, pushes,
 opens a pull request, tags, publishes, or touches homelab state.
 
-The weekly/manual upstream workflow runs the same preparation plus every CI
-gate before creating an update branch and pull request with GitHub's token and
-`gh`. A pull request still requires human screenshot review and grants no
-merge, release, publication, or deployment authority.
+The weekly/manual upstream workflow runs preparation plus every CI gate in a
+credentialless, read-only job. Only after those gates pass does a separate
+write-scoped job validate the checksum-bound patch artifact against the exact
+verified base/result, configure credentials, and create an update branch and
+pull request with GitHub's token and `gh`. A pull request still requires human
+screenshot review and grants no merge, release, publication, or deployment
+authority.
 
 ## License and notices
 

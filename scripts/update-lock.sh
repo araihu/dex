@@ -33,6 +33,23 @@ if [ "$mode" = update ]; then
 		die 'tracked worktree must be clean before updating'
 fi
 
+work=$(mktemp -d "${TMPDIR:-/tmp}/araihu-dex-update.XXXXXX")
+install_started=0
+install_complete=0
+cleanup() {
+	status=$?
+	trap - EXIT HUP INT TERM
+	if [ "$status" -ne 0 ] && [ "$install_started" -eq 1 ] && [ "$install_complete" -eq 0 ]; then
+		if ! restore_install; then
+			printf '%s\n' 'update-lock: failed to restore prior prepared paths' >&2
+			status=1
+		fi
+	fi
+	rm -rf "$work"
+	exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
+
 lock_value() {
 	key=$1
 	count=$(awk -F= -v key="$key" '$1 == key { count++ } END { print count + 0 }' "$lock_file")
@@ -67,6 +84,25 @@ hash_file() {
 		die 'sha256 tool is required'
 	fi
 }
+
+snapshot_git_metadata() {
+	destination=$1
+	head_target=$(git -C "$repo" symbolic-ref -q HEAD || printf detached)
+	{
+		printf 'HEAD\t%s\n' "$(git -C "$repo" rev-parse HEAD)"
+		printf 'symbolic-HEAD\t%s\n' "$head_target"
+		git -C "$repo" for-each-ref --format='ref\t%(refname)\t%(objectname)'
+		git -C "$repo" config --local --get-regexp '^remote\.' 2>/dev/null || :
+	} | LC_ALL=C sort >"$destination" || die 'cannot snapshot Git metadata'
+}
+
+assert_git_metadata_unchanged() {
+	snapshot_git_metadata "$work/git-metadata.current"
+	cmp -s "$work/git-metadata.before" "$work/git-metadata.current" ||
+		die 'Git HEAD, refs, tags, or remotes changed during preparation'
+}
+
+snapshot_git_metadata "$work/git-metadata.before"
 
 write_prefixed_line() {
 	file=$1
@@ -171,15 +207,6 @@ printf '%s\n' "$image_json" | jq -e --arg commit "$new_commit" '
 		| ($labels | length) > 0 and all($labels[]; . == $commit))
 ' >/dev/null || die 'OCI revision label does not match resolved Dex commit'
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/araihu-dex-update.XXXXXX")
-cleanup() {
-	status=$?
-	trap - EXIT HUP INT TERM
-	rm -rf "$work"
-	exit "$status"
-}
-trap cleanup EXIT HUP INT TERM
-
 cosign verify \
 	--certificate-identity "$official_identity" \
 	--certificate-oidc-issuer "$official_issuer" \
@@ -220,6 +247,7 @@ jq -e \
 ' "$work/provenance.json" >/dev/null || die 'official Dex provenance identity mismatch'
 
 if [ "$mode" = verify ]; then
+	assert_git_metadata_unchanged
 	printf '%s\n' "update-lock: verified Dex $new_commit ($new_digest)"
 	exit 0
 fi
@@ -322,6 +350,8 @@ fi
 sh "$image_overlay_test" "$image_id" || die 'filesystem overlay drift checks failed'
 (cd "$stage" && scripts/test-image.sh "$image_id") || die 'visual, semantic, or accessibility acceptance failed'
 
+assert_git_metadata_unchanged
+
 manifest_digest=$(hash_file "$stage/web/manifest.sha256")
 report=$work/update-report.md
 {
@@ -339,24 +369,82 @@ report=$work/update-report.md
 	done
 } >"$report"
 
-for relative_file in \
-	versions.env \
-	Dockerfile \
-	src/header.html \
-	src/footer.html \
-	test/image-overlay_test.sh \
-	test/fetch-sources_test.sh; do
-	cp -p "$stage/$relative_file" "$repo/$relative_file"
+owned_files='versions.env
+Dockerfile
+src/header.html
+src/footer.html
+test/image-overlay_test.sh
+test/fetch-sources_test.sh'
+install_backup=$work/install-backup
+mkdir -p "$install_backup/files"
+for relative_file in $owned_files; do
+	[ -f "$repo/$relative_file" ] || die "prepared path is missing: $relative_file"
+	mkdir -p "$install_backup/files/$(dirname "$relative_file")"
+	cp -p "$repo/$relative_file" "$install_backup/files/$relative_file" ||
+		die "cannot back up prepared path: $relative_file"
 done
-find "$stage/web" -type f -print | while IFS= read -r source; do
-	relative=${source#"$stage/"}
-	mkdir -p "$repo/$(dirname "$relative")"
-	cp -p "$source" "$repo/$relative"
+[ -d "$repo/web" ] || die 'generated web tree is missing'
+cp -R "$repo/web" "$install_backup/web" || die 'cannot back up generated web tree'
+if [ -e "$repo/.cache/sources" ]; then
+	[ -d "$repo/.cache/sources" ] || die 'source cache path is not a directory'
+	cp -R "$repo/.cache/sources" "$install_backup/sources" || die 'cannot back up source cache'
+	: >"$install_backup/sources.present"
+fi
+[ ! -d "$report_file" ] || die 'update report path is a directory'
+if [ -e "$report_file" ]; then
+	cp -p "$report_file" "$install_backup/report" || die 'cannot back up update report'
+	: >"$install_backup/report.present"
+fi
+
+restore_install() {
+	restore_status=0
+	for relative_file in $owned_files; do
+		mkdir -p "$repo/$(dirname "$relative_file")" || restore_status=1
+		cp -p "$install_backup/files/$relative_file" "$repo/$relative_file" || restore_status=1
+	done
+	rm -rf "$repo/web" || restore_status=1
+	cp -R "$install_backup/web" "$repo/web" || restore_status=1
+	rm -rf "$repo/.cache/sources" || restore_status=1
+	if [ -f "$install_backup/sources.present" ]; then
+		mkdir -p "$repo/.cache" || restore_status=1
+		cp -R "$install_backup/sources" "$repo/.cache/sources" || restore_status=1
+	fi
+	rm -f "$report_file" || restore_status=1
+	if [ -f "$install_backup/report.present" ]; then
+		mkdir -p "$(dirname "$report_file")" || restore_status=1
+		cp -p "$install_backup/report" "$report_file" || restore_status=1
+	fi
+	[ "$restore_status" -eq 0 ]
+}
+
+install_checkpoint() {
+	checkpoint=$1
+	if [ "${UPDATE_TEST_INSTALL_FAIL_AT:-}" = "$checkpoint" ]; then
+		die "injected install failure: $checkpoint"
+	fi
+}
+
+install_started=1
+for relative_file in $owned_files; do
+	cp -p "$stage/$relative_file" "$repo/$relative_file" ||
+		die "cannot install prepared path: $relative_file"
 done
+install_checkpoint after-files
+
+rm -rf "$repo/web"
+cp -R "$stage/web" "$repo/web" || die 'cannot install generated web tree'
+install_checkpoint after-web
+
 mkdir -p "$repo/.cache"
 rm -rf "$repo/.cache/sources"
-cp -R "$stage/.cache/sources" "$repo/.cache/sources"
+cp -R "$stage/.cache/sources" "$repo/.cache/sources" || die 'cannot install source cache'
+install_checkpoint after-cache
+
 mkdir -p "$(dirname "$report_file")"
-cp "$report" "$report_file"
+cp -p "$report" "$report_file" || die 'cannot install update report'
+install_checkpoint after-report
+
+assert_git_metadata_unchanged
+install_complete=1
 
 printf '%s\n' "update-lock: prepared Dex $old_commit -> $new_commit ($new_digest)"

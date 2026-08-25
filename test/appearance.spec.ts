@@ -190,6 +190,7 @@ test('storage exceptions keep login and in-memory appearance usable', async ({ p
 
 test('cookie exceptions keep controls usable and errors contained', async ({ page }) => {
   await serveFixture(page);
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.addInitScript(() => {
     Object.defineProperty(Document.prototype, 'cookie', {
       configurable: true,
@@ -215,6 +216,8 @@ test('cookie exceptions keep controls usable and errors contained', async ({ pag
   }))).toEqual({ theme: null, darkMode: null });
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
+  await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
+  await expect(page.getByRole('button', { name: 'Ativar modo escuro' })).toHaveAttribute('aria-pressed', 'false');
   expect(errors).toEqual([]);
 });
 

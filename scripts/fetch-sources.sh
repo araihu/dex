@@ -136,6 +136,15 @@ require_sha256() {
 	[ "${#2}" -eq 64 ] || die "$1 must be a 64-character SHA-256"
 }
 
+validate_asset_member_path() {
+	member=$1
+	case "$member" in
+		''|.|..|/*|*/|*//*|./*|*/./*|*/.|../*|*/../*|*/..|-*|*[!A-Za-z0-9_./-]*)
+			die "invalid asset member: $member"
+			;;
+	esac
+}
+
 require_value DEX_COMMIT "$DEX_COMMIT"
 case "$DEX_COMMIT" in
 	*[!0-9a-f]*) die "DEX_COMMIT must be a lowercase commit SHA" ;;
@@ -211,9 +220,7 @@ for member in \
 	"$ASSET_MEMBER_6" \
 	"$ASSET_MEMBER_7" \
 	"$ASSET_MEMBER_8"; do
-	case "$member" in
-		''|.|..|/*|../*|*/../*|*/..|-*|*[!A-Za-z0-9_./-]*) die "invalid asset member: $member" ;;
-	esac
+	validate_asset_member_path "$member"
 	case " $seen_members " in
 		*" $member "*) die "duplicate asset member: $member" ;;
 	esac
@@ -264,16 +271,24 @@ validate_archive() {
 	kind=$2
 	listing=$3
 	verbose=$4
+	canonical_listing="$listing.canonical"
 	tar -tzf "$archive" >"$listing" || die "$kind archive cannot be listed"
+	: >"$canonical_listing"
 	while IFS= read -r member || [ -n "$member" ]; do
 		case "$member" in
-			''|/*|..|../*|*/../*|*/..)
+			''|.|..|/*|*//*|./*|*/./*|*/.|../*|*/../*|*/..)
 				die "$kind archive contains unsafe member: $member"
 				;;
 		esac
+		canonical_member=$member
+		case "$canonical_member" in
+			*/) canonical_member=${canonical_member%/} ;;
+		esac
+		[ -n "$canonical_member" ] || die "$kind archive contains unsafe member: $member"
+		printf '%s\n' "$canonical_member" >>"$canonical_listing"
 	done <"$listing"
-	duplicate=$(sort "$listing" | uniq -d | sed -n '1p')
-	[ -z "$duplicate" ] || die "$kind archive contains duplicate member: $duplicate"
+	duplicate=$(sort "$canonical_listing" | uniq -d | sed -n '1p')
+	[ -z "$duplicate" ] || die "$kind archive contains duplicate destination: $duplicate"
 	tar -tvzf "$archive" >"$verbose" || die "$kind archive metadata cannot be read"
 	while IFS= read -r entry || [ -n "$entry" ]; do
 		entry_type=$(printf '%s' "$entry" | cut -c 1)
@@ -367,8 +382,15 @@ validate_archive "$assets_archive" 'Assets' "$assets_listing" "$assets_verbose"
 assets_stage="$fetch_cache/.assets-stage.$$"
 dex_stage="$fetch_cache/.dex-stage.$$"
 catalog_work="$fetch_cache/.catalog-work.$$"
-mkdir -p "$assets_stage" "$dex_stage/web/templates" "$catalog_work"
-trap 'rm -rf "$assets_stage" "$dex_stage" "$catalog_work" "$dex_listing" "$dex_verbose" "$assets_listing" "$assets_verbose"' EXIT HUP INT TERM
+gomod_cache="$catalog_work/gomodcache"
+gocache="$catalog_work/gocache"
+mkdir -p "$assets_stage" "$dex_stage/web/templates" "$catalog_work" "$gomod_cache"
+cleanup() {
+	chmod -R u+w "$catalog_work" 2>/dev/null || true
+	rm -rf "$assets_stage" "$dex_stage" "$catalog_work" "$dex_listing" "$dex_listing.canonical" \
+		"$dex_verbose" "$assets_listing" "$assets_listing.canonical" "$assets_verbose"
+}
+trap cleanup EXIT HUP INT TERM
 
 for member in \
 	"$ASSET_MEMBER_1" \
@@ -441,14 +463,6 @@ done
 install_dex_tree "$dex_stage" "$fetch_cache/dex"
 dex_stage=
 
-theme_tmp="$fetch_cache/.goshtoso-theme.$$"
-GOWORK=off go run "$GOSHTOSO_MODULE/cmd/goshtoso@$GOSHTOSO_VERSION" \
-	-theme -out="$theme_tmp" || die 'Goshtoso theme generation failed'
-verify_file "$theme_tmp" "$GOSHTOSO_THEME_SHA256" 'Goshtoso theme checksum mismatch'
-mkdir -p "$fetch_cache/goshtoso"
-mv "$theme_tmp" "$fetch_cache/goshtoso/goshtoso-theme.css"
-theme_tmp=
-
 cat >"$catalog_work/go.mod" <<EOF
 module araihu-dex-catalog
 
@@ -472,14 +486,26 @@ func main() {
 }
 EOF
 
-(cd "$catalog_work" && GOWORK=off go mod download -json "$GOSHTOSO_MODULE@$GOSHTOSO_VERSION") >"$catalog_work/module.json" || \
+(cd "$catalog_work" && GOWORK=off GOMODCACHE="$gomod_cache" GOCACHE="$gocache" \
+	go mod download -json "$GOSHTOSO_MODULE@$GOSHTOSO_VERSION") >"$catalog_work/module.json" || \
 	die 'Goshtoso module download failed'
 module_sum=$(awk -F'"' '/"Sum":/ {print $4; exit}' "$catalog_work/module.json")
 gomod_sum=$(awk -F'"' '/"GoModSum":/ {print $4; exit}' "$catalog_work/module.json")
 [ "$module_sum" = "$GOSHTOSO_MODULE_SUM" ] || die 'Goshtoso module checksum mismatch'
 [ "$gomod_sum" = "$GOSHTOSO_GOMOD_SUM" ] || die 'Goshtoso go.mod checksum mismatch'
+
+theme_tmp="$fetch_cache/.goshtoso-theme.$$"
+GOWORK=off GOMODCACHE="$gomod_cache" GOCACHE="$gocache" \
+	go run "$GOSHTOSO_MODULE/cmd/goshtoso@$GOSHTOSO_VERSION" \
+	-theme -out="$theme_tmp" || die 'Goshtoso theme generation failed'
+verify_file "$theme_tmp" "$GOSHTOSO_THEME_SHA256" 'Goshtoso theme checksum mismatch'
+mkdir -p "$fetch_cache/goshtoso"
+mv "$theme_tmp" "$fetch_cache/goshtoso/goshtoso-theme.css"
+theme_tmp=
+
 catalog_tmp="$fetch_cache/.theme-catalog.$$"
-(cd "$catalog_work" && GOWORK=off go run -mod=mod ./catalog.go >"$catalog_tmp") || \
+(cd "$catalog_work" && GOWORK=off GOMODCACHE="$gomod_cache" GOCACHE="$gocache" \
+	go run -mod=mod ./catalog.go >"$catalog_tmp") || \
 	die 'Goshtoso catalog generation failed'
 verify_file "$catalog_tmp" "$GOSHTOSO_CATALOG_SHA256" 'Goshtoso theme catalog checksum mismatch'
 mv "$catalog_tmp" "$fetch_cache/goshtoso/theme-catalog.txt"

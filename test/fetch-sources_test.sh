@@ -3,7 +3,11 @@ set -eu
 
 repo=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+cleanup() {
+	chmod -R u+w "$tmp" 2>/dev/null || true
+	rm -rf "$tmp"
+}
+trap cleanup EXIT
 
 if [ ! -f "$repo/versions.env" ]; then
 	"$repo/scripts/fetch-sources.sh"
@@ -165,6 +169,93 @@ if FETCH_CACHE="$tmp/bad-member-cache" VERSIONS_FILE="$tmp/bad-member.env" \
 	exit 1
 fi
 grep -F 'Assets member checksum mismatch' "$tmp/member-error"
+
+wrong_module_lock="$tmp/wrong-module-sum.env"
+sed 's|^GOSHTOSO_MODULE_SUM=.*|GOSHTOSO_MODULE_SUM=h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=|' \
+	"$tmp/fixture.env" >"$wrong_module_lock"
+go_wrapper_dir="$tmp/go-wrapper"
+mkdir -p "$go_wrapper_dir"
+go_run_marker="$tmp/go-run-attempted"
+real_go=$(command -v go)
+cat >"$go_wrapper_dir/go" <<EOF
+#!/bin/sh
+for arg do
+	if [ "\$arg" = run ]; then
+		: >"$go_run_marker"
+	fi
+done
+exec "$real_go" "\$@"
+EOF
+chmod +x "$go_wrapper_dir/go"
+if PATH="$go_wrapper_dir:$PATH" FETCH_CACHE="$tmp/wrong-module-cache" \
+	VERSIONS_FILE="$wrong_module_lock" \
+	"$repo/scripts/fetch-sources.sh" 2>"$tmp/wrong-module-error"; then
+	echo 'expected Goshtoso module checksum failure' >&2
+	exit 1
+fi
+grep -F 'Goshtoso module checksum mismatch' "$tmp/wrong-module-error"
+if [ -e "$go_run_marker" ]; then
+	echo 'Goshtoso code ran before module checksum rejection' >&2
+	exit 1
+fi
+
+duplicate_dot_archive="$tmp/duplicate-dot-assets.tar.gz"
+tar -czf "$duplicate_dot_archive" -C "$asset_tree" \
+	NOTICE ./NOTICE \
+	brand/araihu/logo/adaptive-transparent-optical.svg \
+	platform/web/araihu/favicon.svg \
+	platform/web/araihu/favicon-32.png \
+	icons/ui/sprite.svg \
+	licenses/Apache-2.0.txt \
+	licenses/heroicons-MIT.txt \
+	licenses/developer-icons-MIT.txt
+duplicate_dot_hash=$(digest "$duplicate_dot_archive")
+duplicate_dot_sums="$tmp/duplicate-dot-SHA256SUMS"
+{
+	printf '%s  araihu-assets-v0.2.3.tar.gz\n' "$duplicate_dot_hash"
+	printf '%s  checksums.txt\n' "$manifest_hash"
+} >"$duplicate_dot_sums"
+duplicate_dot_sums_hash=$(digest "$duplicate_dot_sums")
+write_lock "$tmp/duplicate-dot.env" \
+	"file://$dex_archive" "$dex_hash" \
+	"file://$duplicate_dot_archive" "$duplicate_dot_hash" \
+	"file://$duplicate_dot_sums" "$duplicate_dot_sums_hash"
+if FETCH_CACHE="$tmp/duplicate-dot-cache" VERSIONS_FILE="$tmp/duplicate-dot.env" \
+	"$repo/scripts/fetch-sources.sh" 2>"$tmp/duplicate-dot-error"; then
+	echo 'expected dot-spelling archive rejection' >&2
+	exit 1
+fi
+grep -F 'Assets archive contains unsafe member: ./NOTICE' "$tmp/duplicate-dot-error"
+
+duplicate_separator_archive="$tmp/duplicate-separator-assets.tar.gz"
+tar -czf "$duplicate_separator_archive" -C "$asset_tree" \
+	NOTICE \
+	brand/araihu/logo/adaptive-transparent-optical.svg \
+	brand//araihu/logo/adaptive-transparent-optical.svg \
+	platform/web/araihu/favicon.svg \
+	platform/web/araihu/favicon-32.png \
+	icons/ui/sprite.svg \
+	licenses/Apache-2.0.txt \
+	licenses/heroicons-MIT.txt \
+	licenses/developer-icons-MIT.txt
+duplicate_separator_hash=$(digest "$duplicate_separator_archive")
+duplicate_separator_sums="$tmp/duplicate-separator-SHA256SUMS"
+{
+	printf '%s  araihu-assets-v0.2.3.tar.gz\n' "$duplicate_separator_hash"
+	printf '%s  checksums.txt\n' "$manifest_hash"
+} >"$duplicate_separator_sums"
+duplicate_separator_sums_hash=$(digest "$duplicate_separator_sums")
+write_lock "$tmp/duplicate-separator.env" \
+	"file://$dex_archive" "$dex_hash" \
+	"file://$duplicate_separator_archive" "$duplicate_separator_hash" \
+	"file://$duplicate_separator_sums" "$duplicate_separator_sums_hash"
+if FETCH_CACHE="$tmp/duplicate-separator-cache" VERSIONS_FILE="$tmp/duplicate-separator.env" \
+	"$repo/scripts/fetch-sources.sh" 2>"$tmp/duplicate-separator-error"; then
+	echo 'expected repeated-separator archive rejection' >&2
+	exit 1
+fi
+grep -F 'Assets archive contains unsafe member: brand//araihu/logo/adaptive-transparent-optical.svg' \
+	"$tmp/duplicate-separator-error"
 
 sed '/^DEX_SOURCE_SHA256=/d' "$repo/versions.env" >"$tmp/unset-lock.env"
 if VERSIONS_FILE="$tmp/unset-lock.env" FETCH_CACHE="$tmp/unset-lock-cache" \

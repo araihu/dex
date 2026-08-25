@@ -410,6 +410,33 @@ def attestation(subject, omit_sbom=False, mutation=None):
             statement_value['subject'][0]['digest']['sha256'] = 'f' * 64
         elif mutation == 'attestation_subject_name':
             statement_value['subject'][0]['name'] = 'ghcr.io/other/image'
+        elif mutation == 'attestation_real_shape':
+            statement_value['_type'] = 'https://in-toto.io/Statement/v0.1'
+            statement_value['subject'] = []
+            if predicate_type == 'https://slsa.dev/provenance/v1':
+                statement_value['predicate']['buildDefinition']['buildType'] = 'https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md'
+        elif mutation == 'attestation_real_subject':
+            statement_value['_type'] = 'https://in-toto.io/Statement/v0.1'
+            statement_value['subject'][0]['name'] = 'ghcr.io/other/image'
+            if predicate_type == 'https://slsa.dev/provenance/v1':
+                statement_value['predicate']['buildDefinition']['buildType'] = 'https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md'
+        elif mutation == 'attestation_real_digest':
+            statement_value['_type'] = 'https://in-toto.io/Statement/v0.1'
+            statement_value['subject'][0]['digest']['sha256'] = 'f' * 64
+        elif mutation == 'attestation_multiple_subjects':
+            statement_value['_type'] = 'https://in-toto.io/Statement/v0.1'
+            statement_value['subject'].append(statement_value['subject'][0].copy())
+        elif mutation == 'attestation_real_payload':
+            statement_value['_type'] = 'https://in-toto.io/Statement/v0.1'
+            statement_value['subject'] = []
+            if predicate_type == 'https://slsa.dev/provenance/v1':
+                statement_value['predicate']['buildDefinition']['buildType'] = 'https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md'
+            statement_value['predicate'] = {}
+        elif mutation == 'attestation_real_type':
+            statement_value['_type'] = 'https://in-toto.io/Statement/v0'
+            statement_value['subject'] = []
+            if predicate_type == 'https://slsa.dev/provenance/v1':
+                statement_value['predicate']['buildDefinition']['buildType'] = 'https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md'
         elif mutation == 'attestation_payload':
             statement_value['predicate'] = {}
         elif mutation == 'attestation_provenance' and predicate_type == 'https://slsa.dev/provenance/v1':
@@ -477,7 +504,9 @@ PY
 
 make_oci "$state/release.oci.tar" good
 "$verifier" local "$state/release.oci.tar"
-for mutation in platform foreign_os label frontend evidence attestation_type attestation_subject attestation_subject_name attestation_payload attestation_provenance attestation_sbom; do
+make_oci "$state/attestation-real-shape.oci.tar" attestation_real_shape
+"$verifier" local "$state/attestation-real-shape.oci.tar"
+for mutation in platform foreign_os label frontend evidence attestation_type attestation_subject attestation_subject_name attestation_real_subject attestation_real_digest attestation_multiple_subjects attestation_payload attestation_real_payload attestation_real_type attestation_provenance attestation_sbom; do
 	make_oci "$state/$mutation.oci.tar" "$mutation"
 	if "$verifier" local "$state/$mutation.oci.tar" >/dev/null 2>&1; then
 		die "local verifier accepted $mutation mutation"

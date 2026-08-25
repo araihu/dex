@@ -331,21 +331,22 @@ for descriptor in descriptors:
         if predicate_type not in {'https://spdx.dev/Document', 'https://slsa.dev/provenance/v1'}:
             fail('attestation predicate type is not an allowed SBOM or provenance type')
         statement = read_json(blob(layer_descriptor, 'attestation statement'), 'attestation statement')
-        if statement.get('_type') != 'https://in-toto.io/Statement/v1':
-            fail('attestation statement is not an in-toto v1 statement')
+        if statement.get('_type') not in {'https://in-toto.io/Statement/v0.1', 'https://in-toto.io/Statement/v1'}:
+            fail('attestation statement is not an allowed in-toto statement')
         if statement.get('predicateType') != predicate_type:
             fail('attestation predicate annotation mismatch')
         subjects = statement.get('subject')
-        if not isinstance(subjects, list) or len(subjects) != 1:
-            fail('attestation statement must contain exactly one subject')
-        attestation_subject = subjects[0]
-        if not isinstance(attestation_subject, dict) or attestation_subject.get('name') != 'ghcr.io/araihu/dex':
-            fail('attestation subject name mismatch')
-        subject_digest = attestation_subject.get('digest')
-        if not isinstance(subject_digest, dict) or set(subject_digest) != {'sha256'}:
-            fail('attestation subject digest must be a sha256 digest')
-        if 'sha256:' + str(subject_digest['sha256']) != referenced:
-            fail('attestation subject digest does not match the referenced image')
+        if not isinstance(subjects, list) or len(subjects) > 1:
+            fail('attestation statement must contain zero or one subject')
+        if subjects:
+            attestation_subject = subjects[0]
+            if not isinstance(attestation_subject, dict) or attestation_subject.get('name') != 'ghcr.io/araihu/dex':
+                fail('attestation subject name mismatch')
+            subject_digest = attestation_subject.get('digest')
+            if not isinstance(subject_digest, dict) or set(subject_digest) != {'sha256'}:
+                fail('attestation subject digest must be a sha256 digest')
+            if 'sha256:' + str(subject_digest['sha256']) != referenced:
+                fail('attestation subject digest does not match the referenced image')
         predicate = statement.get('predicate')
         if not isinstance(predicate, dict) or not predicate:
             fail('attestation predicate body must be an object')
@@ -355,7 +356,10 @@ for descriptor in descriptors:
         else:
             build_definition = predicate.get('buildDefinition')
             run_details = predicate.get('runDetails')
-            if not isinstance(build_definition, dict) or not build_definition or build_definition.get('buildType') != 'https://mobyproject.org/buildkit@v1':
+            if not isinstance(build_definition, dict) or not build_definition or build_definition.get('buildType') not in {
+                'https://mobyproject.org/buildkit@v1',
+                'https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md',
+            }:
                 fail('SLSA provenance build definition is not BuildKit')
             if not isinstance(run_details, dict) or not run_details:
                 fail('SLSA provenance run details are missing')

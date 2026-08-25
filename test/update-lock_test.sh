@@ -10,6 +10,7 @@ old_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 new_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 old_digest=sha256:1111111111111111111111111111111111111111111111111111111111111111
 new_digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
+new_version=v2.46.0-20260806171424-bbbbbbbb
 approved_prerelease_tag=v2.46.0-20260806171424-ab64ed77
 approved_prerelease_commit=ab64ed778070e983cbb10cfc07ea4bb397d14312
 approved_prerelease_digest=sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
@@ -86,7 +87,8 @@ prepare_fake_commands() {
 		'    ;;' \
 		'  *".Image"*)' \
 		'    revision=${FIXTURE_REVISION:-$FIXTURE_NEW_COMMIT}' \
-		'    printf "{\"linux/amd64\":{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"%s\"}}},\"linux/arm64\":{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"%s\"}}}}\n" "$revision" "$revision"' \
+		'    version=${FIXTURE_VERSION:-$FIXTURE_NEW_VERSION}' \
+		'    printf "{\"linux/amd64\":{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"%s\",\"org.opencontainers.image.version\":\"%s\"}}},\"linux/arm64\":{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"%s\",\"org.opencontainers.image.version\":\"%s\"}}}}\n" "$revision" "$version" "$revision" "$version"' \
 		'    ;;' \
 		'  *"buildx build"*)' \
 		'    while [ "$#" -gt 0 ]; do' \
@@ -213,6 +215,7 @@ run_update() {
 	FIXTURE_NEW_ARCHIVE="$case_dir/new.tar.gz" \
 	FIXTURE_NEW_COMMIT="$(cat "$case_dir/new-commit")" \
 	FIXTURE_NEW_DIGEST="$(cat "$case_dir/new-digest")" \
+	FIXTURE_NEW_VERSION="$(cat "$case_dir/new-version")" \
 	"$@" "$script" >"$case_dir/stdout" 2>"$case_dir/stderr"
 }
 
@@ -225,6 +228,7 @@ run_lock_verification() {
 	FIXTURE_NEW_ARCHIVE="$case_dir/new.tar.gz" \
 	FIXTURE_NEW_COMMIT="$(cat "$case_dir/new-commit")" \
 	FIXTURE_NEW_DIGEST="$(cat "$case_dir/new-digest")" \
+	FIXTURE_NEW_VERSION="$(cat "$case_dir/new-version")" \
 	"$script" --verify-lock >"$case_dir/stdout" 2>"$case_dir/stderr"
 }
 
@@ -251,6 +255,7 @@ make_case() {
 	: >"$case_dir/commands.log"
 	printf '%s\n' "$new_commit" >"$case_dir/new-commit"
 	printf '%s\n' "$new_digest" >"$case_dir/new-digest"
+	printf '%s\n' "$new_version" >"$case_dir/new-version"
 	printf '%s\n' "$case_dir"
 }
 
@@ -261,6 +266,14 @@ prepare_repository "$case_dir/repo" 'header base
 header overlay'
 expect_failure "$case_dir" 'OCI revision label does not match resolved Dex commit' \
 	env FIXTURE_REVISION="$old_commit"
+
+case_dir=$(make_case version-label-invalid)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+expect_failure "$case_dir" 'Dex image version label is missing or inconsistent' \
+	env FIXTURE_VERSION=v2.46.0
 
 case_dir=$(make_case inventory-change)
 make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
@@ -350,15 +363,16 @@ git_metadata_snapshot "$case_dir/repo" >"$case_dir/git-after"
 cmp -s "$case_dir/git-before" "$case_dir/git-after" ||
 	fail 'successful update mutated Git HEAD, refs, tags, or remotes'
 grep -Fx "DEX_COMMIT=$new_commit" "$case_dir/repo/versions.env" >/dev/null
-grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/versions.env" >/dev/null
+grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:$new_version@$new_digest" "$case_dir/repo/versions.env" >/dev/null
 grep -Fx "DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$new_commit.tar.gz" \
 	"$case_dir/repo/versions.env" >/dev/null
-grep -Fx "FROM ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/Dockerfile" >/dev/null
+grep -Fx "FROM ghcr.io/dexidp/dex:$new_version@$new_digest" "$case_dir/repo/Dockerfile" >/dev/null
 grep -Fx "dex_commit=$new_commit" "$case_dir/repo/test/fetch-sources_test.sh" >/dev/null
-grep -Fx "upstream='ghcr.io/dexidp/dex:master@$new_digest'" \
+grep -Fx "upstream='ghcr.io/dexidp/dex:$new_version@$new_digest'" \
 	"$case_dir/repo/test/image-overlay_test.sh" >/dev/null
 [ ! -e "$case_dir/repo/web/obsolete.html" ] || fail 'staged generated deletion was not installed'
 grep -Fx -e "- New commit: \`$new_commit\`" "$case_dir/repo/.cache/update-report.md" >/dev/null
+grep -Fx -e "- New image: \`ghcr.io/dexidp/dex:$new_version@$new_digest\`" "$case_dir/repo/.cache/update-report.md" >/dev/null
 grep -Fx -e "- New digest: \`$new_digest\`" "$case_dir/repo/.cache/update-report.md" >/dev/null
 [ ! -e "$case_dir/repo/.cache/sources/stale" ] || fail 'changed update preserved stale source-cache content'
 
@@ -385,7 +399,7 @@ printf '%s\n' "$old_digest" >"$case_dir/new-digest"
 make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
 cp "$case_dir/old.tar.gz" "$case_dir/new.tar.gz"
 prepare_repository "$case_dir/repo" 'header base
-header overlay'
+header overlay' "$old_commit" "$old_digest" "ghcr.io/dexidp/dex:$new_version@$old_digest"
 run_update "$case_dir" env
 [ -z "$(git -C "$case_dir/repo" status --short)" ] || fail 'no-op update changed tracked files'
 [ ! -e "$case_dir/repo/.cache/sources/stale" ] || fail 'update preserved stale source-cache content'
@@ -400,7 +414,7 @@ grep -F 'image-overlay-test' "$case_dir/commands.log" >/dev/null
 grep -F 'real-image-test' "$case_dir/commands.log" >/dev/null
 grep -F 'cosign verify --certificate-identity https://github.com/dexidp/dex/.github/workflows/artifacts.yaml@refs/heads/master --certificate-oidc-issuer https://token.actions.githubusercontent.com' \
 	"$case_dir/commands.log" >/dev/null
-grep -F "cosign verify-attestation --certificate-identity https://github.com/dexidp/dex/.github/workflows/artifacts.yaml@refs/heads/master --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository dexidp/dex --certificate-github-workflow-ref refs/heads/master --certificate-github-workflow-sha $old_commit --type slsaprovenance1 --output json ghcr.io/dexidp/dex:master@$old_digest" \
+grep -F "cosign verify-attestation --certificate-identity https://github.com/dexidp/dex/.github/workflows/artifacts.yaml@refs/heads/master --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository dexidp/dex --certificate-github-workflow-ref refs/heads/master --certificate-github-workflow-sha $old_commit --type slsaprovenance1 --output json ghcr.io/dexidp/dex:$new_version@$old_digest" \
 	"$case_dir/commands.log" >/dev/null || fail 'update-lock did not use credentialless Cosign provenance verification'
 if grep -F 'gh ' "$case_dir/commands.log" >/dev/null; then
 	fail 'update-lock used GitHub CLI credentials for public verification'
@@ -441,7 +455,18 @@ grep -F 'cosign verify-attestation' "$case_dir/commands.log" >/dev/null ||
 if grep -E '(docker buildx build|curl |npm |fetch-sources|image-test|gh )' "$case_dir/commands.log" >/dev/null; then
 	fail 'prerelease lock-only verification resolved or prepared an update'
 fi
-expect_failure "$case_dir" 'update mode requires the official Dex master discovery lock' env
+
+: >"$case_dir/commands.log"
+if ! run_update "$case_dir" env; then
+	sed -n '1,120p' "$case_dir/stderr" >&2
+	fail 'approved prerelease update preparation failed'
+fi
+grep -F 'docker buildx imagetools inspect ghcr.io/dexidp/dex:master' "$case_dir/commands.log" >/dev/null ||
+	fail 'prerelease update did not discover the next official master image'
+grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:$new_version@$approved_prerelease_digest" "$case_dir/repo/versions.env" >/dev/null ||
+	fail 'prerelease update did not write the discovered immutable image version'
+grep -Fx "FROM ghcr.io/dexidp/dex:$new_version@$approved_prerelease_digest" "$case_dir/repo/Dockerfile" >/dev/null ||
+	fail 'prerelease update did not update the Dockerfile to the discovered image version'
 
 update_workflow=$repo/.github/workflows/update-upstream.yml
 ci_workflow=$repo/.github/workflows/ci.yml

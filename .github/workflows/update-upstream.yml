@@ -171,7 +171,8 @@ jobs:
           cp web/manifest.sha256 "$bundle/manifest.sha256"
 
           new_commit=$(sed -n 's/^DEX_COMMIT=//p' versions.env)
-          new_digest=$(sed -n 's|^DEX_IMAGE=ghcr.io/dexidp/dex:master@||p' versions.env)
+          new_image=$(sed -n 's/^DEX_IMAGE=//p' versions.env)
+          new_digest=${new_image##*@}
           patch_sha256=$(sha256sum "$bundle/prepared-update.patch" | awk '{print $1}')
           report_sha256=$(sha256sum "$bundle/update-report.md" | awk '{print $1}')
           manifest_sha256=$(sha256sum "$bundle/manifest.sha256" | awk '{print $1}')
@@ -306,7 +307,8 @@ jobs:
           test "$changed" = true
 
           test "$(sed -n 's/^DEX_COMMIT=//p' versions.env)" = "$new_commit"
-          test "$(sed -n 's|^DEX_IMAGE=ghcr.io/dexidp/dex:master@||p' versions.env)" = "$new_digest"
+          locked_image=$(sed -n 's/^DEX_IMAGE=//p' versions.env)
+          test "${locked_image##*@}" = "$new_digest"
           grep -F -x -- "- New commit: \`$new_commit\`" "$report"
           grep -F -x -- "- New digest: \`$new_digest\`" "$report"
           grep -F -x -- "- Generated manifest digest: \`sha256:$manifest_sha256\`" "$report"
@@ -481,7 +483,8 @@ jobs:
           test "$changed" = true
 
           test "$(sed -n 's/^DEX_COMMIT=//p' versions.env)" = "$EXPECTED_NEW_COMMIT"
-          test "$(sed -n 's|^DEX_IMAGE=ghcr.io/dexidp/dex:master@||p' versions.env)" = "$EXPECTED_NEW_DIGEST"
+          locked_image=$(sed -n 's/^DEX_IMAGE=//p' versions.env)
+          test "${locked_image##*@}" = "$EXPECTED_NEW_DIGEST"
           grep -F -x -- "- New commit: \`$EXPECTED_NEW_COMMIT\`" "$report"
           grep -F -x -- "- New digest: \`$EXPECTED_NEW_DIGEST\`" "$report"
           grep -F -x -- "- Generated manifest digest: \`sha256:$EXPECTED_MANIFEST_SHA256\`" "$report"

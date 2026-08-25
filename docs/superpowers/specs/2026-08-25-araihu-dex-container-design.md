@@ -241,7 +241,7 @@ A single machine-readable lock records:
 
 CI verifies the upstream OCI `org.opencontainers.image.revision` label equals the locked commit. It verifies the upstream signature and provenance against the official Dex GitHub Actions identity before building.
 
-A weekly scheduled workflow and manual dispatch run the same update command. The command resolves the current Dex `master` commit and matching `master` image digest, refreshes non-runtime template fixtures, updates the lock, regenerates assets, and opens a pull request. It never merges, tags, publishes, or changes homelab state.
+A weekly scheduled workflow and manual dispatch run the same update command. The approved prerelease lock is the initial baseline; the command then resolves the current Dex `master` commit and matching image digest, reads the official `org.opencontainers.image.version` pseudo-version, refreshes non-runtime template fixtures, updates the lock to that version plus digest, regenerates assets, and opens a pull request. It never merges, tags, publishes, or changes homelab state.
 
 An update pull request fails closed when:
 

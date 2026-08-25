@@ -12,6 +12,7 @@ lock_file=$repo/versions.env
 canonical_report_file=$repo/.cache/update-report.md
 report_file=${UPDATE_REPORT_FILE:-$canonical_report_file}
 official_image=ghcr.io/dexidp/dex:master
+official_image_repository=ghcr.io/dexidp/dex
 approved_verify_image=ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77
 approved_verify_commit=ab64ed778070e983cbb10cfc07ea4bb397d14312
 approved_verify_digest=sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
@@ -93,6 +94,13 @@ require_digest() {
 		''|*[!0-9a-f]*) die "$2 must be a lowercase sha256 digest" ;;
 	esac
 	[ "${#value}" -eq 64 ] || die "$2 must be a 64-character sha256 digest"
+}
+
+require_pseudo_version() {
+	version=$1
+	printf '%s\n' "$version" | jq -e -R \
+		'test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-[0-9]{14}-[0-9a-f]{8}$")' \
+		>/dev/null || die 'Dex image version label must be a lowercase pseudo-version'
 }
 
 hash_file() {
@@ -238,12 +246,17 @@ require_commit "$old_commit" DEX_COMMIT
 case "$old_image" in
 	"$official_image"@*) old_digest=${old_image#*@} ;;
 	"$approved_verify_image@$approved_verify_digest")
-		[ "$mode" = verify ] || die 'update mode requires the official Dex master discovery lock'
 		[ "$old_commit" = "$approved_verify_commit" ] ||
 			die 'approved Dex prerelease commit does not match DEX_COMMIT'
 		old_digest=$approved_verify_digest
 		;;
-	*) die 'DEX_IMAGE must pin the official Dex master image or approved verification prerelease' ;;
+	"$official_image_repository":*@*)
+		old_version=${old_image#"$official_image_repository:"}
+		old_version=${old_version%@*}
+		require_pseudo_version "$old_version"
+		old_digest=${old_image#*@}
+		;;
+	*) die 'DEX_IMAGE must pin the official Dex master or pseudo-version image' ;;
 esac
 require_digest "$old_digest" DEX_IMAGE
 [ "$old_source_url" = "https://github.com/dexidp/dex/archive/$old_commit.tar.gz" ] ||
@@ -270,10 +283,30 @@ manifest_json=$(docker buildx imagetools inspect "$manifest_ref" --format '{{jso
 resolved_digest=$(printf '%s\n' "$manifest_json" | jq -er '.digest') ||
 	die 'Dex image did not resolve to a digest'
 if [ "$mode" = update ]; then
-	new_digest=$resolved_digest
-	new_image=$official_image@$new_digest
+		new_digest=$resolved_digest
+		image_json=$(docker buildx imagetools inspect "$manifest_ref" --format '{{json .Image}}') ||
+			die 'cannot inspect Dex image version metadata'
+		new_version=$(printf '%s\n' "$image_json" | jq -er '
+			if type != "object" or (has("linux/amd64") | not) or (has("linux/arm64") | not) then
+				empty
+			else
+				[
+					.["linux/amd64"].config.Labels["org.opencontainers.image.version"] // empty,
+					.["linux/arm64"].config.Labels["org.opencontainers.image.version"] // empty
+				] as $versions
+				| if ($versions | length) == 2
+					and all($versions[]; type == "string" and test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-[0-9]{14}-[0-9a-f]{8}$"))
+					and $versions[0] == $versions[1]
+				then $versions[0]
+				else empty
+				end
+			end
+	') || die 'Dex image version label is missing or inconsistent'
+	new_image=$official_image_repository:$new_version@$new_digest
 else
 	[ "$resolved_digest" = "$new_digest" ] || die 'locked Dex image digest no longer resolves exactly'
+	image_json=$(docker buildx imagetools inspect "$new_image" --format '{{json .Image}}') ||
+		die 'cannot inspect Dex image version metadata'
 fi
 require_digest "$new_digest" 'resolved Dex image'
 printf '%s\n' "$manifest_json" | jq -e --arg digest "$new_digest" '
@@ -284,8 +317,6 @@ printf '%s\n' "$manifest_json" | jq -e --arg digest "$new_digest" '
 	and any(.manifests[]; .platform.os == "linux" and .platform.architecture == "arm64")
 ' >/dev/null || die 'Dex master digest is not the required multi-architecture index'
 
-image_json=$(docker buildx imagetools inspect "$new_image" --format '{{json .Image}}') ||
-	die 'cannot inspect Dex platform image metadata'
 printf '%s\n' "$image_json" | jq -e --arg commit "$new_commit" '
 	type == "object"
 	and has("linux/amd64")
@@ -449,6 +480,7 @@ report=$work/update-report.md
 	printf '%s\n' '## Dex upstream update'
 	printf '\n- Old commit: `%s`\n' "$old_commit"
 	printf -- '- New commit: `%s`\n' "$new_commit"
+	printf -- '- New image: `%s`\n' "$new_image"
 	printf -- '- Old digest: `%s`\n' "$old_digest"
 	printf -- '- New digest: `%s`\n' "$new_digest"
 	printf -- '- WebAuthn script: unchanged\n'

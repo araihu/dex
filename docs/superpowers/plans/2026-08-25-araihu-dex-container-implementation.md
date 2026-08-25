@@ -23,7 +23,7 @@
 
 ```text
 DEX_COMMIT=ab64ed778070e983cbb10cfc07ea4bb397d14312
-DEX_IMAGE=ghcr.io/dexidp/dex:master@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
+DEX_IMAGE=ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
 GOSHTOSO_VERSION=v0.2.7
 ARAIHU_ASSETS_VERSION=v0.2.3
 TAILWIND_VERSION=4.3.3
@@ -348,7 +348,7 @@ Expected: nonzero, `./entrypoint.sh: not found`.
 
 - [ ] Implement a POSIX shell wrapper with only three branches: explicit empty frontend rollback, exact theme allowlist validation, and `theme-default.js` overwrite followed by `exec` of `${UPSTREAM_ENTRYPOINT:-/usr/local/bin/docker-entrypoint}`. The file itself is writable but its directory remains read-only; a failed/partial write aborts before Dex starts. Do not use `eval`, `envsubst`, JSON tools, or log environment values.
 - [ ] Add a generated `theme-default.js` stub whose only statement sets `window.__araihuDexDefaultTheme` to `"araihu"`; include it in the manifest. The image copies it as `1001:1001`, and the wrapper atomically replaces it with the validated runtime key.
-- [ ] Write a single-stage final Dockerfile `FROM ghcr.io/dexidp/dex:master@sha256:...`. Copy only the two shared templates, `web/static/araihu-*`, appearance/default scripts, approved logo/favicon/icons, notices, and wrapper. Use `COPY --chown=1001:1001`; keep `USER 1001:1001`; set `DEX_FRONTEND_DIR=/srv/dex/web`; set the wrapper as `ENTRYPOINT`; preserve upstream CMD.
+- [ ] Write a single-stage final Dockerfile `FROM ghcr.io/dexidp/dex:<approved-prerelease>@sha256:...`. Copy only the two shared templates, `web/static/araihu-*`, appearance/default scripts, approved logo/favicon/icons, notices, and wrapper. Use `COPY --chown=1001:1001`; keep `USER 1001:1001`; set `DEX_FRONTEND_DIR=/srv/dex/web`; set the wrapper as `ENTRYPOINT`; preserve upstream CMD.
 - [ ] Add a static allowlist assertion to `image-overlay_test.sh`: compare filesystem listings of the upstream and derived images and fail if a flow template differs or any unapproved path appears.
 - [ ] Build and test the local image.
 
@@ -427,7 +427,7 @@ git commit -m 'test: lock Dex semantics and visual evidence'
 - Modify: `README.md`
 
 - [ ] Test update logic with fixtures before adding the workflow. Cover mismatched revision label/digest, changed template inventory, failed shared-template rebase, changed WebAuthn script, and a valid no-op update.
-- [ ] Implement `update-lock.sh` to resolve one Dex `master` commit and matching multi-arch digest, verify `org.opencontainers.image.revision`, verify the official signature/provenance identity, update immutable values, refresh cached fixtures, regenerate, and run focused drift checks. It must not commit, push, create a PR, tag, or publish.
+- [ ] Implement `update-lock.sh` to accept the approved prerelease as the initial lock, then resolve one Dex `master` commit and matching multi-arch digest, read the official pseudo-version label, verify `org.opencontainers.image.revision`, verify the official signature/provenance identity, update immutable values, refresh cached fixtures, regenerate, and run focused drift checks. It must not commit, push, create a PR, tag, or publish.
 - [ ] Make `ci.yml` run on pull requests and `main` pushes with only `contents: read` and `packages: read`. Pin every action by full commit SHA with its release tag in a comment.
 - [ ] CI order: `npm ci`; lock/source verification; generation; `git diff --exit-code`; shell tests; Node tests; build arm64 and amd64; filesystem-overlay diff; real-image acceptance; vulnerability scan; upload screenshot/report artifacts.
 - [ ] Ensure PR jobs build to the local BuildKit cache only. No registry login, package write permission, image tag, attestation, or signing step exists in CI.
@@ -463,6 +463,7 @@ git commit -m 'ci: verify overlay and prepare upstream updates'
 - [ ] Write a policy test that parses the workflow and rejects non-`v*` triggers, mutable base images, extra platforms, broad permissions, PR publication, `master`/`edge` tags, missing SBOM/provenance, or missing keyless signature verification.
 - [ ] Configure stable tags only: `vX.Y.Z`, `X.Y`, `X`, and `latest`. Reject prerelease tags until separately designed.
 - [ ] Build exactly `linux/amd64,linux/arm64` to `ghcr.io/araihu/dex`. Emit OCI labels for AraiHu revision/version, upstream commit/digest, Goshtoso/Assets versions, creation time, source, and licenses.
+- [ ] Verify the local OCI archive, bind its root digest to the temporary candidate reference, and promote only that verified candidate digest to stable aliases.
 - [ ] Use BuildKit provenance plus SPDX JSON SBOM, GitHub artifact attestation, and Cosign keyless signing bound to the release workflow identity. Upload manifest/checksum, SBOM, scan, and screenshot evidence.
 - [ ] Set workflow permissions exactly to `contents: read`, `packages: write`, `id-token: write`, and `attestations: write`. Do not add deployments, environments, secrets, or homelab credentials.
 - [ ] Give `verify-release.sh` two explicit modes. `local <oci.tar>` validates index platforms, per-platform labels, identical frontend manifest bytes, and embedded SBOM/provenance. `remote <image-ref>` additionally validates the published subject, signature identity, and tag mapping.

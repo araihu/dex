@@ -305,6 +305,7 @@ if platform_frontend['amd64'] != platform_frontend['arm64']:
     fail('frontend bytes differ between linux/amd64 and linux/arm64')
 
 attestations = {}
+known_image_digests = {descriptor.get('digest') for descriptor in images.values()}
 for descriptor in descriptors:
     annotations = descriptor.get('annotations') or {}
     if annotations.get('vnd.docker.reference.type') != 'attestation-manifest':
@@ -312,16 +313,52 @@ for descriptor in descriptors:
     referenced = annotations.get('vnd.docker.reference.digest')
     if not digest_pattern.fullmatch(referenced or ''):
         fail('attestation manifest has invalid subject digest')
+    if referenced not in known_image_digests:
+        fail('attestation manifest references an unknown platform image')
     attestation = read_json(blob(descriptor, 'attestation manifest'), 'attestation manifest')
+    if attestation.get('mediaType') != 'application/vnd.oci.image.manifest.v1+json':
+        fail('attestation manifest has an invalid media type')
     layers = attestation.get('layers')
     if not isinstance(layers, list):
         fail('attestation layers missing')
+    if len(layers) != 2:
+        fail('attestation must contain exactly one SBOM and one provenance statement')
     predicates = attestations.setdefault(referenced, set())
     for layer_descriptor in layers:
+        if not isinstance(layer_descriptor, dict):
+            fail('attestation layer descriptor must be an object')
         predicate_type = (layer_descriptor.get('annotations') or {}).get('in-toto.io/predicate-type')
+        if predicate_type not in {'https://spdx.dev/Document', 'https://slsa.dev/provenance/v1'}:
+            fail('attestation predicate type is not an allowed SBOM or provenance type')
         statement = read_json(blob(layer_descriptor, 'attestation statement'), 'attestation statement')
+        if statement.get('_type') != 'https://in-toto.io/Statement/v1':
+            fail('attestation statement is not an in-toto v1 statement')
         if statement.get('predicateType') != predicate_type:
             fail('attestation predicate annotation mismatch')
+        subjects = statement.get('subject')
+        if not isinstance(subjects, list) or len(subjects) != 1:
+            fail('attestation statement must contain exactly one subject')
+        attestation_subject = subjects[0]
+        if not isinstance(attestation_subject, dict) or attestation_subject.get('name') != 'ghcr.io/araihu/dex':
+            fail('attestation subject name mismatch')
+        subject_digest = attestation_subject.get('digest')
+        if not isinstance(subject_digest, dict) or set(subject_digest) != {'sha256'}:
+            fail('attestation subject digest must be a sha256 digest')
+        if 'sha256:' + str(subject_digest['sha256']) != referenced:
+            fail('attestation subject digest does not match the referenced image')
+        predicate = statement.get('predicate')
+        if not isinstance(predicate, dict) or not predicate:
+            fail('attestation predicate body must be an object')
+        if predicate_type == 'https://spdx.dev/Document':
+            if predicate.get('SPDXID') != 'SPDXRef-DOCUMENT' or not str(predicate.get('spdxVersion', '')).startswith('SPDX-'):
+                fail('SPDX attestation predicate body is invalid')
+        else:
+            build_definition = predicate.get('buildDefinition')
+            run_details = predicate.get('runDetails')
+            if not isinstance(build_definition, dict) or not build_definition or build_definition.get('buildType') != 'https://mobyproject.org/buildkit@v1':
+                fail('SLSA provenance build definition is not BuildKit')
+            if not isinstance(run_details, dict) or not run_details:
+                fail('SLSA provenance run details are missing')
         predicates.add(predicate_type)
 
 for architecture, descriptor in images.items():
@@ -419,13 +456,16 @@ PY
 				die 'per-platform creation labels differ'
 		done
 
-		expected_refs=(
+	expected_refs=(
 			"$image:$version"
 			"$image:$major.$minor"
 			"$image:$major"
 			"$image:latest"
 		)
-		if [[ "$subject" != "$image@$digest" ]]; then
+		candidate_subject=false
+		if [[ "$subject" =~ ^$image:candidate-[0-9a-f]{40}$ ]]; then
+			candidate_subject=true
+		elif [[ "$subject" != "$image@$digest" ]]; then
 			matched=false
 			for expected_ref in "${expected_refs[@]}"; do
 				[[ "$subject" != "$expected_ref" ]] || matched=true
@@ -433,17 +473,19 @@ PY
 			[[ "$matched" == true ]] || die 'input tag is not one of the four stable release tags'
 		fi
 
-		for expected_ref in "${expected_refs[@]}"; do
-			docker buildx imagetools inspect --raw "$expected_ref" > "$state/tag-index.json"
-			tag_digest=$(python3 - "$state/tag-index.json" <<'PY'
+		if [[ "$candidate_subject" == false ]]; then
+			for expected_ref in "${expected_refs[@]}"; do
+				docker buildx imagetools inspect --raw "$expected_ref" > "$state/tag-index.json"
+				tag_digest=$(python3 - "$state/tag-index.json" <<'PY'
 import hashlib
 import pathlib
 import sys
 print('sha256:' + hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
 PY
 )
-			[[ "$tag_digest" == "$digest" ]] || die "tag does not resolve to published subject: $expected_ref"
-		done
+				[[ "$tag_digest" == "$digest" ]] || die "tag does not resolve to published subject: $expected_ref"
+			done
+		fi
 
 		docker buildx imagetools inspect "$image@$digest" --format '{{ json .SBOM }}' > "$state/sbom.json"
 		jq -e '.. | objects | select(.SPDXID? == "SPDXRef-DOCUMENT")' "$state/sbom.json" >/dev/null ||

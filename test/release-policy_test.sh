@@ -90,17 +90,11 @@ metadata_run = metadata['run'].to_s
   'io.araihu.dex.upstream.digest=',
   'io.araihu.dex.goshtoso.version=',
   'io.araihu.dex.assets.version=',
+  'candidate-${GITHUB_SHA}',
 ].each { |fragment| abort "release metadata missing #{fragment}" unless metadata_run.include?(fragment) }
 
 trust = step(steps, 'trust')
 abort 'locked upstream trust verification missing' unless trust['run'].to_s.include?('scripts/update-lock.sh --verify-lock')
-
-local_oci = step(steps, 'local_oci')
-local_run = local_oci['run'].to_s
-abort 'local candidate lacks exact platforms' unless local_oci.dig('env', 'PLATFORMS') == '${{ env.PLATFORMS }}'
-abort 'local candidate lacks maximum provenance' unless local_run.include?('--provenance=mode=max')
-abort 'local candidate lacks embedded SBOM' unless local_run.include?('--sbom=true')
-abort 'local candidate is not an OCI archive' unless local_run.include?('type=oci,dest=$RUNNER_TEMP/release.oci.tar')
 
 verify_local = step(steps, 'verify_local')
 abort 'local OCI verification missing' unless verify_local['run'].to_s.include?('scripts/verify-release.sh local "$RUNNER_TEMP/release.oci.tar"')
@@ -117,11 +111,11 @@ abort 'registry login must use the job-scoped token' unless login.dig('with', 'p
 
 publish = step(steps, 'publish')
 abort 'publish action missing' unless publish['uses'].start_with?('docker/build-push-action@')
+abort 'stable tags must not be published by the candidate build' if publish.dig('with', 'tags')
+abort 'candidate build must not use the stable push shorthand' if publish.dig('with', 'push')
 expected_publish = {
   'context' => '.',
   'platforms' => '${{ env.PLATFORMS }}',
-  'push' => true,
-  'tags' => '${{ steps.release.outputs.tags }}',
   'labels' => '${{ steps.release.outputs.labels }}',
   'provenance' => 'mode=max',
   'sbom' => true,
@@ -129,20 +123,35 @@ expected_publish = {
 expected_publish.each do |key, value|
   abort "publish #{key} policy mismatch" unless publish.dig('with', key) == value
 end
+outputs = publish.dig('with', 'outputs').to_s
+abort 'candidate build must export the locally verified OCI archive' unless outputs.include?('type=oci,dest=${{ runner.temp }}/release.oci.tar')
+abort 'candidate build must push only its temporary candidate reference' unless outputs.include?('type=registry,name=${{ steps.release.outputs.candidate }},push=true')
+abort 'candidate build must carry exact platform/provenance settings' unless publish.dig('with', 'platforms') == '${{ env.PLATFORMS }}' && publish.dig('with', 'provenance') == 'mode=max' && publish.dig('with', 'sbom') == true
+
+candidate = step(steps, 'candidate')
+candidate_run = candidate['run'].to_s
+abort 'candidate digest must match the verified OCI archive' unless candidate_run.include?('tar -xOf "$OCI_ARCHIVE" index.json') && candidate_run.include?('root_digest') && candidate_run.include?('blob_digest') && candidate_run.include?('remote_digest') && candidate_run.include?('remote_digest" = "$local_digest"')
 
 attest = step(steps, 'attest')
 abort 'GitHub build provenance attestation missing' unless attest['uses'].start_with?('actions/attest-build-provenance@')
 abort 'attestation subject name mismatch' unless attest.dig('with', 'subject-name') == '${{ env.IMAGE }}'
-abort 'attestation subject digest mismatch' unless attest.dig('with', 'subject-digest') == '${{ steps.publish.outputs.digest }}'
+abort 'attestation subject digest mismatch' unless attest.dig('with', 'subject-digest') == '${{ steps.candidate.outputs.digest }}'
 abort 'attestation must be pushed with the image' unless attest.dig('with', 'push-to-registry') == true
 abort 'artifact metadata permission expansion is forbidden' unless attest.dig('with', 'create-storage-record') == false
 
 sign = step(steps, 'sign')
 abort 'keyless digest signing missing' unless sign['run'].to_s.include?('cosign sign --yes "$IMAGE@$DIGEST"')
-abort 'signature must bind the published digest' unless sign.dig('env', 'DIGEST') == '${{ steps.publish.outputs.digest }}'
+abort 'signature must bind the candidate digest' unless sign.dig('env', 'DIGEST') == '${{ steps.candidate.outputs.digest }}'
 
-verify_remote = step(steps, 'verify_remote')
-abort 'remote signature/evidence verification missing' unless verify_remote['run'].to_s.include?('scripts/verify-release.sh remote "$IMAGE@$DIGEST"')
+verify_candidate = step(steps, 'verify_candidate')
+abort 'candidate signature/evidence verification missing' unless verify_candidate['run'].to_s.include?('scripts/verify-release.sh remote "$CANDIDATE"')
+
+promote = step(steps, 'promote')
+promote_run = promote['run'].to_s
+abort 'stable tags must be promoted from the verified candidate digest' unless promote_run.include?('docker buildx imagetools create --tag') && promote_run.include?('$IMAGE@$DIGEST')
+
+verify_aliases = step(steps, 'verify_aliases')
+abort 'stable alias verification missing' unless verify_aliases['run'].to_s.include?('scripts/verify-release.sh remote "$IMAGE@$DIGEST"')
 
 evidence = step(steps, 'evidence')
 evidence_run = evidence['run'].to_s
@@ -158,12 +167,16 @@ upload_paths = upload.dig('with', 'path').to_s
 end
 
 ids = steps.map { |candidate| candidate['id'] }.compact
-%w[trust verify_local scan].each do |id|
+%w[trust scan].each do |id|
   abort "#{id} must run before registry login" unless ids.index(id) < ids.index('login')
 end
-%w[attest sign verify_remote evidence upload].each do |id|
+%w[attest sign verify_candidate promote verify_aliases evidence upload].each do |id|
   abort "#{id} must run after publication" unless ids.index(id) > ids.index('publish')
 end
+abort 'candidate must be resolved before attestation' unless ids.index('candidate') < ids.index('attest')
+abort 'local candidate must be verified before its digest is resolved' unless ids.index('verify_local') < ids.index('candidate')
+abort 'candidate must be verified before stable promotion' unless ids.index('verify_candidate') < ids.index('promote')
+abort 'stable aliases must be verified after promotion' unless ids.index('verify_aliases') > ids.index('promote')
 
 serialized = workflow.to_s
 abort 'pull-request publication is forbidden' if serialized.match?(/pull_request|refs\/pull/)
@@ -173,11 +186,10 @@ abort 'deployments are forbidden in release workflow' if serialized.match?(/depl
 
 locked_image = File.foreach(versions_path).find { |line| line.start_with?('DEX_IMAGE=') }&.split('=', 2)&.last&.strip
 abort 'locked Dex image missing' unless locked_image
-expected_locked_image = 'ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b'
-abort 'Dex image lock must use the approved immutable prerelease' unless locked_image == expected_locked_image
+locked_image_pattern = %r{\Aghcr\.io/dexidp/dex:(?:master|v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9]{14}-[0-9a-f]{8})?)@sha256:[0-9a-f]{64}\z}
+abort 'Dex image lock must be an immutable official image reference' unless locked_image.match?(locked_image_pattern)
 from = File.foreach(dockerfile_path).find { |line| line.start_with?('FROM ') }&.split&.fetch(1, nil)
 abort 'Dockerfile base must equal the immutable lock' unless from == locked_image
-abort 'Dockerfile base must reject the generic master tag' unless from == expected_locked_image
 RUBY
 }
 
@@ -373,22 +385,38 @@ def image(architecture, os_name='linux'):
         platform={'os': os_name, 'architecture': architecture},
     )
 
-def attestation(subject, omit_sbom=False):
+def attestation(subject, omit_sbom=False, mutation=None):
     subject_digest = subject['digest']
     layers = []
     predicates = [
-        ('https://slsa.dev/provenance/v1', {'buildType': 'https://mobyproject.org/buildkit@v1'}),
+        ('https://slsa.dev/provenance/v1', {
+            'buildDefinition': {'buildType': 'https://mobyproject.org/buildkit@v1'},
+            'runDetails': {'builder': {'id': 'https://example.invalid/fixture-builder'}},
+        }),
         ('https://spdx.dev/Document', {'SPDXID': 'SPDXRef-DOCUMENT', 'spdxVersion': 'SPDX-2.3'}),
     ]
     if omit_sbom:
         predicates.pop()
     for predicate_type, predicate in predicates:
-        statement = canonical({
+        statement_value = {
             '_type': 'https://in-toto.io/Statement/v1',
             'subject': [{'name': 'ghcr.io/araihu/dex', 'digest': {'sha256': subject_digest.removeprefix('sha256:')}}],
             'predicateType': predicate_type,
             'predicate': predicate,
-        })
+        }
+        if mutation == 'attestation_type':
+            statement_value['_type'] = 'https://in-toto.io/Statement/v0'
+        elif mutation == 'attestation_subject':
+            statement_value['subject'][0]['digest']['sha256'] = 'f' * 64
+        elif mutation == 'attestation_subject_name':
+            statement_value['subject'][0]['name'] = 'ghcr.io/other/image'
+        elif mutation == 'attestation_payload':
+            statement_value['predicate'] = {}
+        elif mutation == 'attestation_provenance' and predicate_type == 'https://slsa.dev/provenance/v1':
+            statement_value['predicate']['buildDefinition']['buildType'] = 'https://example.invalid/forged'
+        elif mutation == 'attestation_sbom' and predicate_type == 'https://spdx.dev/Document':
+            statement_value['predicate']['SPDXID'] = 'SPDXRef-FORGED'
+        statement = canonical(statement_value)
         layers.append(descriptor(
             statement,
             'application/vnd.in-toto+json',
@@ -417,7 +445,7 @@ if mutation == 'platform':
 if mutation == 'foreign_os':
     images.append(image('amd64', 'windows'))
 attestations = [
-    attestation(subject, omit_sbom=(mutation == 'evidence' and subject['platform']['architecture'] == 'arm64'))
+    attestation(subject, omit_sbom=(mutation == 'evidence' and subject['platform']['architecture'] == 'arm64'), mutation=mutation)
     for subject in images
 ]
 release_index = canonical({
@@ -449,7 +477,7 @@ PY
 
 make_oci "$state/release.oci.tar" good
 "$verifier" local "$state/release.oci.tar"
-for mutation in platform foreign_os label frontend evidence; do
+for mutation in platform foreign_os label frontend evidence attestation_type attestation_subject attestation_subject_name attestation_payload attestation_provenance attestation_sbom; do
 	make_oci "$state/$mutation.oci.tar" "$mutation"
 	if "$verifier" local "$state/$mutation.oci.tar" >/dev/null 2>&1; then
 		die "local verifier accepted $mutation mutation"
@@ -551,6 +579,7 @@ remote_assets_version=$(sed -n 's/^ARAIHU_ASSETS_VERSION=//p' "$repo/versions.en
 
 run_remote_fixture() {
 	index=$1
+	subject=${2:-ghcr.io/araihu/dex:v1.2.3}
 	REMOTE_INDEX=$index \
 		REMOTE_REVISION=$remote_revision \
 		REMOTE_UPSTREAM_REVISION=$remote_upstream_revision \
@@ -558,11 +587,15 @@ run_remote_fixture() {
 		REMOTE_GOSHTOSO_VERSION=$remote_goshtoso_version \
 		REMOTE_ASSETS_VERSION=$remote_assets_version \
 		PATH="$state/remote-bin:$PATH" \
-		"$verifier" remote ghcr.io/araihu/dex:v1.2.3
+		"$verifier" remote "$subject"
 }
 
 make_remote_index "$state/remote-index.json" good
 run_remote_fixture "$state/remote-index.json" >/dev/null
+run_remote_fixture "$state/remote-index.json" ghcr.io/araihu/dex:candidate-0123456789abcdef0123456789abcdef01234567 >/dev/null
+if run_remote_fixture "$state/remote-index.json" ghcr.io/araihu/dex:candidate-not-a-commit >/dev/null 2>&1; then
+	die 'remote verifier accepted a malformed candidate tag'
+fi
 make_remote_index "$state/remote-foreign-os-index.json" foreign_os
 if run_remote_fixture "$state/remote-foreign-os-index.json" >/dev/null 2>&1; then
 	die 'remote verifier accepted a foreign platform mutation'

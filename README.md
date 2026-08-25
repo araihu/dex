@@ -47,9 +47,11 @@ The current base is exactly
 The generic `:master` tag is not an accepted build contract.
 Lock-only verification accepts that one immutable prerelease as an alias for
 the same official `master`-workflow signature and provenance identity. Update
-preparation remains a separate `master` discovery lane and fails closed while
-the prerelease is the repository lock; changing that lane requires separate
-design and authorization.
+preparation accepts this prerelease as its initial baseline, resolves the next
+verified `master` commit and digest, reads the official
+`org.opencontainers.image.version` pseudo-version, and writes that version tag
+with the digest as the lock. It never follows the mutable tag in the
+Dockerfile.
 
 ## CI and upstream updates
 
@@ -67,7 +69,7 @@ preparation:
 scripts/update-lock.sh --verify-lock
 ```
 
-To prepare the current verified Dex `master` commit locally, install
+To prepare the next verified Dex `master` commit locally, install
 dependencies and the Playwright browser first, ensure `cosign`, Docker Buildx,
 Go, Node, `jq`, and `curl` are available, then run:
 

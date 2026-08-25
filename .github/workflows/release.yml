@@ -50,10 +50,12 @@ jobs:
           upstream_digest=${DEX_IMAGE##*@}
           [[ "$upstream_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          candidate="$image:candidate-${GITHUB_SHA}"
 
           {
             echo "version=$version"
             echo "created=$created"
+            echo "candidate=$candidate"
             echo "node=$NODE_VERSION"
             echo "npm=$NPM_VERSION"
             echo "actionlint=$ACTIONLINT_VERSION"
@@ -150,31 +152,6 @@ jobs:
           sh test/image-overlay_test.sh "$LOCAL_IMAGE"
           scripts/test-image.sh "$LOCAL_IMAGE"
 
-      - name: Build local multi-architecture OCI candidate
-        id: local_oci
-        env:
-          LABELS: ${{ steps.release.outputs.labels }}
-          PLATFORMS: ${{ env.PLATFORMS }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release-evidence
-          label_args=()
-          while IFS= read -r label; do
-            test -z "$label" || label_args+=(--label "$label")
-          done <<< "$LABELS"
-          docker buildx build \
-            --platform "$PLATFORMS" \
-            --output "type=oci,dest=$RUNNER_TEMP/release.oci.tar" \
-            --provenance=mode=max \
-            --sbom=true \
-            "${label_args[@]}" \
-            .
-
-      - name: Verify local OCI candidate
-        id: verify_local
-        run: scripts/verify-release.sh local "$RUNNER_TEMP/release.oci.tar"
-
       - name: Scan local release candidate
         id: scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -191,39 +168,99 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Publish stable multi-architecture image
+      - name: Build and publish exact OCI candidate
         id: publish
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: ${{ env.PLATFORMS }}
-          push: true
-          tags: ${{ steps.release.outputs.tags }}
           labels: ${{ steps.release.outputs.labels }}
+          outputs: |
+            type=oci,dest=${{ runner.temp }}/release.oci.tar
+            type=registry,name=${{ steps.release.outputs.candidate }},push=true
           provenance: mode=max
           sbom: true
+
+      - name: Verify local OCI candidate
+        id: verify_local
+        run: scripts/verify-release.sh local "$RUNNER_TEMP/release.oci.tar"
+
+      - name: Resolve candidate digest
+        id: candidate
+        env:
+          CANDIDATE: ${{ steps.release.outputs.candidate }}
+          OCI_ARCHIVE: ${{ runner.temp }}/release.oci.tar
+        shell: bash
+        run: |
+          set -euo pipefail
+          index_json=$(tar -xOf "$OCI_ARCHIVE" index.json)
+          root_digest=$(printf '%s\n' "$index_json" | jq -r '
+            if (.manifests | length) == 1
+              and .manifests[0].mediaType == "application/vnd.oci.image.index.v1+json"
+            then .manifests[0].digest
+            else empty
+            end
+          ')
+          if [[ -n "$root_digest" ]]; then
+            [[ "$root_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            root_hex=${root_digest#sha256:}
+            blob_digest="sha256:$(tar -xOf "$OCI_ARCHIVE" "blobs/sha256/$root_hex" | sha256sum | awk '{print $1}')"
+            [[ "$blob_digest" = "$root_digest" ]]
+            local_digest=$root_digest
+          else
+            local_digest="sha256:$(tar -xOf "$OCI_ARCHIVE" index.json | sha256sum | awk '{print $1}')"
+          fi
+          [[ "$local_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          remote_digest=$(docker buildx imagetools inspect "$CANDIDATE" --format '{{json .Manifest}}' | jq -er '.digest')
+          [[ "$remote_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$remote_digest" = "$local_digest" ]] || {
+            echo "candidate digest differs from locally verified OCI archive: $remote_digest != $local_digest" >&2
+            exit 1
+          }
+          echo "digest=$local_digest" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub build provenance attestation
         id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.publish.outputs.digest }}
+          subject-digest: ${{ steps.candidate.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
 
-      - name: Sign published digest keylessly
+      - name: Sign candidate digest keylessly
         id: sign
         env:
           IMAGE: ${{ env.IMAGE }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
         run: cosign sign --yes "$IMAGE@$DIGEST"
 
-      - name: Verify published subject and workflow identity
-        id: verify_remote
+      - name: Verify signed candidate and workflow identity
+        id: verify_candidate
+        env:
+          CANDIDATE: ${{ steps.release.outputs.candidate }}
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/verify-release.sh remote "$CANDIDATE"
+
+      - name: Promote verified candidate to stable tags
+        id: promote
         env:
           IMAGE: ${{ env.IMAGE }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+          TAGS: ${{ steps.release.outputs.tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            test -n "$tag"
+            docker buildx imagetools create --tag "$tag" "$IMAGE@$DIGEST"
+          done <<< "$TAGS"
+
+      - name: Verify promoted stable tags and workflow identity
+        id: verify_aliases
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
           GH_TOKEN: ${{ github.token }}
         run: scripts/verify-release.sh remote "$IMAGE@$DIGEST"
 
@@ -231,7 +268,7 @@ jobs:
         id: evidence
         env:
           IMAGE: ${{ env.IMAGE }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
           ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -eu

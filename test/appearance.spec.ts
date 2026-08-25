@@ -1,5 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { expect, test } from './fixtures/browser-errors';
 
 const origin = 'http://dex.test';
 const loginURL = `${origin}/auth/local`;
@@ -60,6 +61,28 @@ async function seedStorage(page: Page, values: Record<string, string>) {
     for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value);
   }, values);
 }
+
+test('appearance fixture rejects an unexpected console error', async ({ page }) => {
+  await serveFixture(page);
+  await page.goto(loginURL);
+  await expect(page.locator('form')).toBeVisible();
+
+  const consoleError = page.waitForEvent('console', (message) => message.text() === 'appearance console mutation');
+  await page.evaluate(() => console.error('appearance console mutation'));
+  expect((await consoleError).type()).toBe('error');
+  test.fail(true, 'the automatic observer must fail this console mutation');
+});
+
+test('appearance fixture rejects an unexpected page error', async ({ page }) => {
+  await serveFixture(page);
+  await page.goto(loginURL);
+  await expect(page.locator('form')).toBeVisible();
+
+  const pageError = page.waitForEvent('pageerror');
+  await page.evaluate(() => setTimeout(() => { throw new Error('appearance page mutation'); }));
+  expect((await pageError).message).toBe('appearance page mutation');
+  test.fail(true, 'the automatic observer must fail this page mutation');
+});
 
 test('denied storage changes only the current page', async ({ page }) => {
   await serveFixture(page);
@@ -178,9 +201,6 @@ test('storage exceptions keep login and in-memory appearance usable', async ({ p
       },
     });
   });
-  const errors: Error[] = [];
-  page.on('pageerror', (error) => errors.push(error));
-
   await page.goto(loginURL);
   await page.getByLabel('Tema').selectOption('dracula');
   await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
@@ -195,7 +215,6 @@ test('storage exceptions keep login and in-memory appearance usable', async ({ p
   await page.reload();
   await expect(page.locator('form')).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
-  expect(errors).toEqual([]);
 });
 
 test('cookie exceptions keep controls usable and errors contained', async ({ page }) => {
@@ -208,9 +227,6 @@ test('cookie exceptions keep controls usable and errors contained', async ({ pag
       set() { throw new DOMException('blocked', 'SecurityError'); },
     });
   });
-  const errors: Error[] = [];
-  page.on('pageerror', (error) => errors.push(error));
-
   await page.goto(loginURL);
   await page.getByRole('button', { name: 'Permitir', exact: true }).click();
   await page.getByLabel('Tema').selectOption('zombie');
@@ -228,7 +244,6 @@ test('cookie exceptions keep controls usable and errors contained', async ({ pag
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
   await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
   await expect(page.getByRole('button', { name: 'Ativar modo escuro' })).toHaveAttribute('aria-pressed', 'false');
-  expect(errors).toEqual([]);
 });
 
 test('native controls update accessible state without touching the login form', async ({ page }) => {

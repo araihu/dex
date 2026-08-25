@@ -1,13 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { BrowserErrorObserver } from './fixtures/browser-errors';
 
-async function observerModule() {
-  return import('./fixtures/real-dex').catch(() => ({}));
-}
-
-test('browser observer accepts only an exact endpoint status and count allowance', async () => {
-  const helper = await observerModule();
-  expect(helper.BrowserErrorObserver).toBeDefined();
-  const observer = new helper.BrowserErrorObserver!();
+test('browser observer accepts only an exact endpoint status and count allowance', () => {
+  const observer = new BrowserErrorObserver();
   observer.allowHTTPError({ pathname: '/mfa/webauthn/login/begin', status: 503, count: 1 });
   observer.recordConsole(
     'error',
@@ -18,9 +13,7 @@ test('browser observer accepts only an exact endpoint status and count allowance
   expect(() => observer.verify()).not.toThrow();
 });
 
-test('browser observer rejects unexpected, mismatched, excess, and page errors', async () => {
-  const helper = await observerModule();
-  expect(helper.BrowserErrorObserver).toBeDefined();
+test('browser observer rejects unexpected, mismatched, excess, and page errors', () => {
   const failures = [
     { pathname: '/unexpected', status: 503, count: 1, repeats: 1, pageError: false },
     { pathname: '/mfa/webauthn/login/begin', status: 500, count: 1, repeats: 1, pageError: false },
@@ -29,7 +22,7 @@ test('browser observer rejects unexpected, mismatched, excess, and page errors',
   ];
 
   for (const mutation of failures) {
-    const observer = new helper.BrowserErrorObserver!();
+    const observer = new BrowserErrorObserver();
     observer.allowHTTPError({
       pathname: '/mfa/webauthn/login/begin',
       status: 503,

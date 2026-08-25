@@ -47,7 +47,8 @@ while IFS= read -r path; do
 		./srv/dex/web/static/favicon-32.png|\
 		./srv/dex/web/static/favicon.svg|\
 		./srv/dex/web/static/icons.svg|\
-		./srv/dex/web/static/theme-default.js)
+		./srv/dex/web/static/theme-default.js|\
+		./srv/dex/web/static/theme-default.template.js)
 			;;
 		*) fail "unapproved path added: $path" ;;
 	esac
@@ -79,6 +80,7 @@ for path in \
 	srv/dex/web/static/favicon.svg \
 	srv/dex/web/static/icons.svg \
 	srv/dex/web/static/theme-default.js \
+	srv/dex/web/static/theme-default.template.js \
 	usr/local/bin/araihu-dex-entrypoint; do
 	[ -f "$tmp/derived/$path" ] || fail "required overlay file missing: /$path"
 done
@@ -96,5 +98,8 @@ frontend_env=$(docker image inspect "$image" --format '{{range .Config.Env}}{{pr
 docker run --rm --entrypoint /bin/sh "$image" -c \
 	'test "$(stat -c "%u:%g" /srv/dex/web/static/theme-default.js)" = 1001:1001 && test -w /srv/dex/web/static/theme-default.js && test ! -w /srv/dex/web/static' ||
 	fail 'runtime default file ownership or write boundary changed'
+docker run --rm --entrypoint /bin/sh "$image" -c \
+	'test "$(stat -c "%u:%g" /srv/dex/web/static/theme-default.template.js)" = 0:0 && test ! -w /srv/dex/web/static/theme-default.template.js' ||
+	fail 'immutable default template ownership or write boundary changed'
 
 printf '%s\n' 'image overlay tests passed'

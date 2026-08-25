@@ -57,6 +57,7 @@ The header's parser-blocking `theme-default.js` applies the selected default
 and allowed stored appearance before the deferred control script runs. The
 control script then handles theme selection, dark mode, and the `gt_storage`
 consent boundary; it never submits or changes a Dex authentication form.
+The entrypoint renders that file from a root-owned template on every start.
 
 ## CI and upstream updates
 

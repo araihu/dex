@@ -25,18 +25,20 @@ if ! is_valid_theme "$theme"; then
 fi
 
 theme_file=${THEME_DEFAULT_FILE:-/srv/dex/web/static/theme-default.js}
-template=$(cat "$theme_file")
+template_file=${THEME_TEMPLATE_FILE:-/srv/dex/web/static/theme-default.template.js}
+[ "$theme_file" != "$template_file" ] || {
+	printf '%s\n' 'entrypoint: theme template and output must differ' >&2
+	exit 1
+}
+template=$(cat "$template_file")
 marker_line='window.__araihuDexDefaultTheme = "__ARAIHU_DEX_DEFAULT_THEME__";'
 case "$template" in
 	*"$marker_line"*)
 		printf '%s\n' "$template" | sed "s/__ARAIHU_DEX_DEFAULT_THEME__/$theme/g" >"$theme_file"
 		;;
 	*)
-		rendered_theme=$(printf '%s\n' "$template" | sed -n 's/^window.__araihuDexDefaultTheme = "\([^"]*\)";$/\1/p' | head -n 1)
-		if [ -z "$rendered_theme" ] || ! is_valid_theme "$rendered_theme"; then
-			printf '%s\n' 'entrypoint: default theme template marker missing' >&2
-			exit 1
-		fi
+		printf '%s\n' 'entrypoint: default theme template marker missing' >&2
+		exit 1
 		;;
 esac
 

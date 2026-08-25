@@ -11,11 +11,12 @@ The approved design and implementation plan are in:
 
 ## Lifecycle gates
 
-No GitHub repository is created until repository visibility is explicitly
-chosen. No branch is pushed without separate explicit approval. No tag or
-GitHub Release is created without separate explicit approval. No GHCR image is
-published without separate explicit approval. No homelab file is edited or
-deployment performed without separate explicit approval.
+Repository visibility must be explicitly chosen before creating a GitHub
+repository, and creating `github.com/araihu/dex` then requires separate
+explicit approval. No branch is pushed without separate explicit approval. No
+tag or GitHub Release is created without separate explicit approval. No GHCR
+image is published without separate explicit approval. No homelab file is
+edited or deployment performed without separate explicit approval.
 
 Green tests, a local build, review approval, or this repository's existence do
 not authorize any of those actions.

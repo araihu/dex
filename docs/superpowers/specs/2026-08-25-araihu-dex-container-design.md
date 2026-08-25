@@ -202,7 +202,9 @@ Otherwise, the wrapper performs exactly three jobs:
 
 1. validate `ARAIHU_DEX_THEME` against the generated allowlist;
 2. render the already-present `static/theme-default.js` template by replacing
-   its validated default-theme marker;
+   its validated default-theme marker; after the first start, accept the
+   already-rendered allowlisted value unchanged so repeated starts are
+   idempotent and fail closed for missing or invalid content;
 3. `exec /usr/local/bin/docker-entrypoint "$@"`.
 
 The output file is pre-created and owned by `1001:1001`; the runtime does not need root or a writable web directory. No Go wrapper is introduced. The environment contract belongs to a shell boundary in front of an upstream Go binary, so adding `caarlos0/env` and `envdoc` would add an otherwise unused Go runtime and module solely for one allowlisted value.

@@ -53,6 +53,13 @@ reset_case
 		UPSTREAM_ENTRYPOINT="$tmp/upstream" ./entrypoint.sh serve
 )
 assert_theme araihu
+first_render=$(cksum "$tmp/theme-default.js")
+ARAIHU_DEX_THEME=araihu THEME_DEFAULT_FILE="$tmp/theme-default.js" \
+	ARGV_FILE="$tmp/argv" UPSTREAM_ENTRYPOINT="$tmp/upstream" \
+	./entrypoint.sh serve
+assert_theme araihu
+[ "$(cksum "$tmp/theme-default.js")" = "$first_render" ] ||
+	fail 'second entrypoint start changed the rendered default theme'
 
 reset_case
 ARAIHU_DEX_THEME='' THEME_DEFAULT_FILE="$tmp/theme-default.js" \

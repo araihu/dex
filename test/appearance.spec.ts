@@ -98,6 +98,18 @@ test('invalid stored and runtime themes fall back through the actual options', a
   await expect(page.getByLabel('Tema')).toHaveValue('araihu');
 });
 
+test('malformed stored dark mode falls back to the system preference', async ({ page }) => {
+  await serveFixture(page);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.context().addCookies([{ name: 'gt_storage', value: 'allowed', url: origin }]);
+  await seedStorage(page, { darkMode: 'sometimes' });
+
+  await page.goto(loginURL);
+
+  await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+  await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('without an allowed preference runtime theme and system dark mode win', async ({ page }) => {
   await serveFixture(page, 'christmas');
   await page.emulateMedia({ colorScheme: 'dark' });
@@ -146,9 +158,14 @@ test('deny removes only overlay appearance keys', async ({ page }) => {
 
 test('storage exceptions keep login and in-memory appearance usable', async ({ page }) => {
   await serveFixture(page);
+  await page.context().addCookies([{ name: 'gt_storage', value: 'allowed', url: origin }]);
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', {
-      get() { throw new DOMException('blocked', 'SecurityError'); },
+      value: {
+        getItem() { throw new DOMException('blocked', 'SecurityError'); },
+        setItem() { throw new DOMException('blocked', 'SecurityError'); },
+        removeItem() { throw new DOMException('blocked', 'SecurityError'); },
+      },
     });
   });
   const errors: Error[] = [];
@@ -156,10 +173,18 @@ test('storage exceptions keep login and in-memory appearance usable', async ({ p
 
   await page.goto(loginURL);
   await page.getByLabel('Tema').selectOption('dracula');
+  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
 
   await expect(page.locator('form')).toBeVisible();
   await expect(page).toHaveURL(/\/auth\/local/);
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dracula');
+  await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+  await page.evaluate(() => {
+    document.cookie = 'gt_storage=denied; Path=/; Max-Age=15552000; SameSite=Lax';
+  });
+  await page.reload();
+  await expect(page.locator('form')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
   expect(errors).toEqual([]);
 });
 
@@ -178,9 +203,18 @@ test('cookie exceptions keep controls usable and errors contained', async ({ pag
   await page.goto(loginURL);
   await page.getByRole('button', { name: 'Permitir', exact: true }).click();
   await page.getByLabel('Tema').selectOption('zombie');
+  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
 
   await expect(page.locator('form')).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'zombie');
+  await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+  await expect(page.getByLabel('Preferências de aparência')).toBeVisible();
+  expect(await page.evaluate(() => ({
+    theme: localStorage.getItem('theme'),
+    darkMode: localStorage.getItem('darkMode'),
+  }))).toEqual({ theme: null, darkMode: null });
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
   expect(errors).toEqual([]);
 });
 

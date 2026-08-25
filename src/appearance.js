@@ -24,7 +24,7 @@
   const runtimeTheme = validTheme(window.__araihuDexDefaultTheme)
     ? window.__araihuDexDefaultTheme
     : fallbackTheme;
-  const consent = safely(() => {
+  const readConsent = () => safely(() => {
     const match = document.cookie
       .split(';')
       .map((part) => part.trim())
@@ -32,6 +32,7 @@
     const value = match?.slice('gt_storage='.length);
     return value === 'allowed' || value === 'denied' ? value : null;
   }, null);
+  const consent = readConsent();
   const storedTheme = consent === 'allowed'
     ? safely(() => localStorage.getItem('theme'), null)
     : null;
@@ -58,14 +59,15 @@
     safely(() => localStorage.setItem('theme', theme));
     safely(() => localStorage.setItem('darkMode', String(darkMode)));
   };
+  const clearPreferences = () => {
+    safely(() => localStorage.removeItem('theme'));
+    safely(() => localStorage.removeItem('darkMode'));
+  };
 
   applyTheme();
   applyDarkMode();
   if (notice) notice.hidden = consent !== null;
-  if (consent === 'denied') {
-    safely(() => localStorage.removeItem('theme'));
-    safely(() => localStorage.removeItem('darkMode'));
-  }
+  if (consent === 'denied') clearPreferences();
 
   themeSelect.addEventListener('change', () => {
     if (!validTheme(themeSelect.value)) return;
@@ -81,15 +83,19 @@
   notice?.addEventListener('click', (event) => {
     const choice = event.target.closest('[data-storage-choice]')?.dataset.storageChoice;
     if (choice !== 'allowed' && choice !== 'denied') return;
-    safely(() => {
+    const cookieConfirmed = safely(() => {
       document.cookie = `gt_storage=${choice}; Path=/; Max-Age=15552000; SameSite=Lax`;
-    });
+      return true;
+    }, false) && readConsent() === choice;
+    if (!cookieConfirmed) {
+      storageAllowed = false;
+      clearPreferences();
+      notice.hidden = false;
+      return;
+    }
     storageAllowed = choice === 'allowed';
     if (storageAllowed) persist();
-    else {
-      safely(() => localStorage.removeItem('theme'));
-      safely(() => localStorage.removeItem('darkMode'));
-    }
+    else clearPreferences();
     notice.hidden = true;
   });
 })();

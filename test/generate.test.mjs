@@ -96,7 +96,6 @@ test('generation emits only the approved deterministic overlay', async () => {
 
   const provenance = new Map([
     ['static/appearance.js', 'src/appearance.js'],
-    ['static/theme-default.js', 'src/theme-default.js'],
     ['static/araihu-logo.svg', '.cache/sources/assets/brand/araihu/logo/adaptive-transparent-optical.svg'],
     ['static/favicon.svg', '.cache/sources/assets/platform/web/araihu/favicon.svg'],
     ['static/favicon-32.png', '.cache/sources/assets/platform/web/araihu/favicon-32.png'],
@@ -105,10 +104,10 @@ test('generation emits only the approved deterministic overlay', async () => {
     assert.deepEqual(await bytes(output), await readFile(new URL(source, root)), output);
   }
 
-  assert.equal(
-    await bytes('static/theme-default.js').then(String),
-    'window.__araihuDexDefaultTheme = "araihu";\n',
-  );
+  const themeDefault = await bytes('static/theme-default.js').then(String);
+  assert.match(themeDefault, /^window\.__araihuDexDefaultTheme = "__ARAIHU_DEX_DEFAULT_THEME__";/m);
+  assert.match(themeDefault, /window\.__araihuDexThemeKeys = \["90s","araihu","arctic"/);
+  assert.match(themeDefault, /root\.dataset\.theme = theme;/);
 
   const iconSource = await readFile(new URL('.cache/sources/assets/icons/ui/sprite.svg', root), 'utf8');
   const icons = await bytes('static/icons.svg').then(String);

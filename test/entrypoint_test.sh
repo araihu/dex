@@ -20,7 +20,9 @@ fail() {
 
 reset_case() {
 	rm -f "$tmp/argv" "$tmp/error"
-	printf '%s\n' sentinel >"$tmp/theme-default.js"
+	printf '%s\n' \
+		'window.__araihuDexDefaultTheme = "__ARAIHU_DEX_DEFAULT_THEME__";' \
+		'window.__araihuDexThemeKeys = ["araihu"];' >"$tmp/theme-default.js"
 }
 
 assert_upstream_called() {
@@ -30,8 +32,10 @@ assert_upstream_called() {
 
 assert_theme() {
 	expected=$1
-	[ "$(cat "$tmp/theme-default.js")" = "window.__araihuDexDefaultTheme = \"$expected\";" ] ||
+	grep -Fqx "window.__araihuDexDefaultTheme = \"$expected\";" "$tmp/theme-default.js" ||
 		fail "wrong generated default theme for $expected"
+	grep -Fqx 'window.__araihuDexThemeKeys = ["araihu"];' "$tmp/theme-default.js" ||
+		fail 'theme bootstrap body was not preserved'
 	assert_upstream_called
 }
 
@@ -80,7 +84,7 @@ assert_invalid() {
 		fail 'invalid theme was accepted'
 	fi
 	[ ! -e "$tmp/argv" ] || fail 'upstream started for invalid theme'
-	[ "$(cat "$tmp/theme-default.js")" = sentinel ] || fail 'invalid theme changed output'
+	grep -Fq '__ARAIHU_DEX_DEFAULT_THEME__' "$tmp/theme-default.js" || fail 'invalid theme changed output'
 	[ "$(cat "$tmp/error")" = 'entrypoint: invalid ARAIHU_DEX_THEME' ] ||
 		fail 'invalid theme diagnostic leaked or changed'
 }
@@ -96,5 +100,16 @@ if ARAIHU_DEX_THEME=araihu THEME_DEFAULT_FILE="$tmp" \
 	fail 'failed output write was accepted'
 fi
 [ ! -e "$tmp/argv" ] || fail 'upstream started after failed output write'
+
+reset_case
+printf '%s\n' sentinel >"$tmp/theme-without-marker.js"
+if ARAIHU_DEX_THEME=araihu THEME_DEFAULT_FILE="$tmp/theme-without-marker.js" \
+	ARGV_FILE="$tmp/argv" UPSTREAM_ENTRYPOINT="$tmp/upstream" \
+	./entrypoint.sh serve >"$tmp/stdout" 2>"$tmp/error"; then
+	fail 'missing template marker was accepted'
+fi
+[ ! -e "$tmp/argv" ] || fail 'upstream started after missing template marker'
+[ "$(cat "$tmp/error")" = 'entrypoint: default theme template marker missing' ] ||
+	fail 'missing marker diagnostic changed'
 
 printf '%s\n' 'entrypoint tests passed'

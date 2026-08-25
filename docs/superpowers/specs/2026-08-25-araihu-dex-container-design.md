@@ -171,6 +171,13 @@ Theme additions or removals come only from an explicit Goshtoso version update. 
 
 The root document uses `data-theme="<key>"`; `.dark` selects the dark token set. All eleven pages share the header, so one root assignment propagates tokens everywhere.
 
+The parser-blocking same-origin `theme-default.js` runs before the deferred
+appearance controller. It contains the generated theme-key allowlist and
+applies the environment default, allowed stored preference, and dark-mode
+preference to `<html>` before the first meaningful paint. The deferred
+controller then binds the visible controls and repeats the same validated
+selection without touching Dex forms.
+
 The visible selector lists the exact generated allowlist. Changing it updates the document immediately. The light/dark button changes `.dark` immediately and updates its accessible name and pressed state. Both controls remain functional without browser storage; denial means changes last only for the current page session.
 
 ## Runtime environment contract
@@ -193,7 +200,8 @@ When `DEX_FRONTEND_DIR` is explicitly empty, the wrapper performs no overlay wor
 Otherwise, the wrapper performs exactly three jobs:
 
 1. validate `ARAIHU_DEX_THEME` against the generated allowlist;
-2. render the already-present `static/theme-default.js` output with the validated JSON string;
+2. render the already-present `static/theme-default.js` template by replacing
+   its validated default-theme marker;
 3. `exec /usr/local/bin/docker-entrypoint "$@"`.
 
 The output file is pre-created and owned by `1001:1001`; the runtime does not need root or a writable web directory. No Go wrapper is introduced. The environment contract belongs to a shell boundary in front of an upstream Go binary, so adding `caarlos0/env` and `envdoc` would add an otherwise unused Go runtime and module solely for one allowlisted value.
@@ -348,6 +356,8 @@ Tests run the real derived Dex image with an isolated configuration, mock connec
 - Throwing cookie and `localStorage` access falls back without page errors.
 - Denied storage changes current-page appearance without persistence.
 - Allowed storage restores theme and dark mode before first meaningful paint.
+- A delayed appearance controller cannot produce a first-frame flash because
+  the parser-blocking bootstrap applies allowed stored preferences first.
 - Invalid stored theme falls back to the validated environment default.
 
 ### Visual evidence
@@ -374,6 +384,11 @@ Rollback has no data migration or identity transformation.
 2. If the overlay image itself is suspect, restore the exact previously pinned
    official prerelease image and digest from `versions.env`.
 3. If only the configured default theme is invalid, remove `ARAIHU_DEX_THEME` or set it to `araihu`.
+
+Rollback tests run login, consent, TOTP, WebAuthn, home, and logout with
+`DEX_FRONTEND_DIR=` on the derived image and repeat the same flow against the
+exact pinned official image. The wrapper bypass test also confirms that an
+invalid overlay theme cannot block the embedded upstream frontend.
 
 Rollback verification covers login, consent, TOTP, WebAuthn, home, and logout against the embedded upstream frontend. The homelab adoption plan must retain the prior image digest until its own separately authorized rollout is accepted.
 

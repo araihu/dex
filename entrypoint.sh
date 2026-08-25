@@ -17,7 +17,15 @@ case "$theme" in
 		;;
 esac
 
-printf 'window.__araihuDexDefaultTheme = "%s";\n' "$theme" \
-	>"${THEME_DEFAULT_FILE:-/srv/dex/web/static/theme-default.js}"
+theme_file=${THEME_DEFAULT_FILE:-/srv/dex/web/static/theme-default.js}
+template=$(cat "$theme_file")
+case "$template" in
+	*__ARAIHU_DEX_DEFAULT_THEME__*) ;;
+	*)
+		printf '%s\n' 'entrypoint: default theme template marker missing' >&2
+		exit 1
+		;;
+esac
+printf '%s\n' "$template" | sed "s/__ARAIHU_DEX_DEFAULT_THEME__/$theme/g" >"$theme_file"
 
 exec "$upstream" "$@"

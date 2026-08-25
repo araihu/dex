@@ -5,6 +5,7 @@ import { expect, test } from './fixtures/browser-errors';
 const origin = 'http://dex.test';
 const loginURL = `${origin}/auth/local`;
 const appearance = await readFile(new URL('../web/static/appearance.js', import.meta.url), 'utf8');
+const themeDefault = await readFile(new URL('../web/static/theme-default.js', import.meta.url), 'utf8');
 
 const options = `
   <option value="90s">90s</option>
@@ -24,10 +25,18 @@ const options = `
   <option value="prototype">Prototype</option>
   <option value="zombie">Zombie</option>`;
 
-async function serveFixture(page: Page, runtimeDefault = 'araihu') {
+async function serveFixture(page: Page, runtimeDefault = 'araihu', delayAppearanceMs = 0) {
   await page.route(`${origin}/**`, async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/static/theme-default.js') {
+      await route.fulfill({
+        contentType: 'application/javascript',
+        body: themeDefault.replace('__ARAIHU_DEX_DEFAULT_THEME__', runtimeDefault),
+      });
+      return;
+    }
     if (url.pathname === '/static/appearance.js') {
+      if (delayAppearanceMs) await new Promise((resolve) => setTimeout(resolve, delayAppearanceMs));
       await route.fulfill({ contentType: 'application/javascript', body: appearance });
       return;
     }
@@ -37,7 +46,7 @@ async function serveFixture(page: Page, runtimeDefault = 'araihu') {
 <html>
   <head>
     <meta charset="utf-8">
-    <script>window.__araihuDexDefaultTheme = ${JSON.stringify(runtimeDefault)}</script>
+    <script src="/static/theme-default.js"></script>
     <script defer src="/static/appearance.js"></script>
   </head>
   <body>
@@ -108,6 +117,31 @@ test('allowed storage restores valid preferences ahead of runtime and media defa
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
   await expect(page.getByLabel('Tema')).toHaveValue('dracula');
   await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('head bootstrap applies stored appearance before deferred controls load', async ({ page }) => {
+  await serveFixture(page, 'modern', 500);
+  await page.context().addCookies([{ name: 'gt_storage', value: 'allowed', url: origin }]);
+  await seedStorage(page, { theme: 'dracula', darkMode: 'true' });
+
+  await page.goto(loginURL);
+  const frames = await page.evaluate(() => new Promise<Array<{ theme: string | null; dark: boolean }>>((resolve) => {
+    const samples: Array<{ theme: string | null; dark: boolean }> = [];
+    const sample = () => {
+      samples.push({ theme: document.documentElement.dataset.theme ?? null, dark: document.documentElement.classList.contains('dark') });
+      if (samples.length === 5) resolve(samples);
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }));
+
+  expect(frames).toEqual([
+    { theme: 'dracula', dark: true },
+    { theme: 'dracula', dark: true },
+    { theme: 'dracula', dark: true },
+    { theme: 'dracula', dark: true },
+    { theme: 'dracula', dark: true },
+  ]);
 });
 
 test('invalid stored and runtime themes fall back through the actual options', async ({ page }) => {
@@ -215,6 +249,27 @@ test('storage exceptions keep login and in-memory appearance usable', async ({ p
   await page.reload();
   await expect(page.locator('form')).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
+});
+
+test('non-DOM storage exceptions stay contained', async ({ page }) => {
+  await serveFixture(page);
+  await page.context().addCookies([{ name: 'gt_storage', value: 'allowed', url: origin }]);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      value: {
+        getItem() { throw new Error('blocked'); },
+        setItem() { throw new Error('blocked'); },
+        removeItem() { throw new Error('blocked'); },
+      },
+    });
+  });
+  await page.goto(loginURL);
+  await page.getByLabel('Tema').selectOption('zombie');
+  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
+
+  await expect(page.locator('form')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'zombie');
+  await expect(page.locator('html')).toHaveClass(/\bdark\b/);
 });
 
 test('cookie exceptions keep controls usable and errors contained', async ({ page }) => {

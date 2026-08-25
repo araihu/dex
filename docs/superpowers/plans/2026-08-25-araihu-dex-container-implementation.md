@@ -347,7 +347,7 @@ sh test/entrypoint_test.sh
 Expected: nonzero, `./entrypoint.sh: not found`.
 
 - [ ] Implement a POSIX shell wrapper with only three branches: explicit empty frontend rollback, exact theme allowlist validation, and `theme-default.js` overwrite followed by `exec` of `${UPSTREAM_ENTRYPOINT:-/usr/local/bin/docker-entrypoint}`. The file itself is writable but its directory remains read-only; a failed/partial write aborts before Dex starts. Do not use `eval`, `envsubst`, JSON tools, or log environment values.
-- [ ] Add a generated `theme-default.js` stub whose only statement sets `window.__araihuDexDefaultTheme` to `"araihu"`; include it in the manifest. The image copies it as `1001:1001`, and the wrapper atomically replaces it with the validated runtime key.
+- [ ] Add a generated parser-blocking `theme-default.js` bootstrap with the released theme-key allowlist, synchronous cookie/localStorage fallback, and a validated default-theme marker; include it in the manifest. The image copies it as `1001:1001`, and the wrapper replaces only the marker before serving.
 - [ ] Write a single-stage final Dockerfile `FROM ghcr.io/dexidp/dex:<approved-prerelease>@sha256:...`. Copy only the two shared templates, `web/static/araihu-*`, appearance/default scripts, approved logo/favicon/icons, notices, and wrapper. Use `COPY --chown=1001:1001`; keep `USER 1001:1001`; set `DEX_FRONTEND_DIR=/srv/dex/web`; set the wrapper as `ENTRYPOINT`; preserve upstream CMD.
 - [ ] Add a static allowlist assertion to `image-overlay_test.sh`: compare filesystem listings of the upstream and derived images and fail if a flow template differs or any unapproved path appears.
 - [ ] Build and test the local image.
@@ -408,6 +408,21 @@ scripts/test-image.sh araihu-dex:test
 ```
 
 Expected: all semantic, storage, accessibility, CSP, WebAuthn, TOTP, and visual assertions pass; no unexpected console errors.
+
+- [ ] Run the embedded-frontend rollback suite against both the derived image
+  with `DEX_FRONTEND_DIR=` and the exact pinned upstream image.
+
+```sh
+DOCKER_DEFAULT_PLATFORM=linux/amd64 DEX_TEST_FRONTEND_DIR= \
+  scripts/test-image.sh araihu-dex:test test/rollback.spec.ts
+DOCKER_DEFAULT_PLATFORM=linux/amd64 DEX_TEST_FRONTEND_DIR= \
+  scripts/test-image.sh \
+  ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b \
+  test/rollback.spec.ts
+```
+
+Expected: login, consent, TOTP enrollment, WebAuthn registration, home, and
+logout remain usable in both rollback targets.
 
 - [ ] Commit tests and reviewed AraiHu baselines.
 

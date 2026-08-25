@@ -53,6 +53,11 @@ verified `master` commit and digest, reads the official
 with the digest as the lock. It never follows the mutable tag in the
 Dockerfile.
 
+The header's parser-blocking `theme-default.js` applies the selected default
+and allowed stored appearance before the deferred control script runs. The
+control script then handles theme selection, dark mode, and the `gt_storage`
+consent boundary; it never submits or changes a Dex authentication form.
+
 ## CI and upstream updates
 
 Pull requests and `main` pushes run source, generation, shell, Node,
@@ -147,6 +152,10 @@ Remote mode is intentionally deferred until an image exists. It is read-only
 but requires Docker Buildx, `jq`, Python, Cosign, GitHub CLI, registry access,
 and GitHub attestation access; it never logs in, pushes, signs, tags, or mutates
 registry or GitHub state itself.
+
+Rollback verification runs `test/rollback.spec.ts` with `DEX_FRONTEND_DIR=` on
+the derived image and on the exact pinned upstream image before any homelab
+adoption decision.
 
 ## License and notices
 

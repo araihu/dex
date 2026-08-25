@@ -9,6 +9,7 @@ die() {
 [ "$#" -ge 1 ] || die 'usage: scripts/test-image.sh IMAGE [playwright arguments...]'
 image=$1
 shift
+frontend_dir=${DEX_TEST_FRONTEND_DIR-/srv/dex/web}
 
 repo=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 fixture=$repo/test/fixtures/dex.yaml
@@ -51,6 +52,7 @@ docker run -d --name "$container" \
 	-e "DEX_TEST_ORIGIN=$origin" \
 	-e "DEX_TEST_REDIRECT_URI=$origin/client/callback" \
 	-e DEX_TEST_DB=/var/dex-test/dex.db \
+	-e "DEX_FRONTEND_DIR=$frontend_dir" \
 	"$image" dex serve /etc/dex/test.yaml >"$state/container-id"
 
 mapping=$(docker port "$container" 5556/tcp)

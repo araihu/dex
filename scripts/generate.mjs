@@ -38,6 +38,7 @@ const assetCopies = new Map([
 const iconIDs = ['hi-24-outline-moon', 'hi-24-outline-sun'];
 const beginOptions = '<!-- BEGIN GENERATED THEME OPTIONS -->';
 const endOptions = '<!-- END GENERATED THEME OPTIONS -->';
+const themeDefaultKeysMarker = '__ARAIHU_DEX_THEME_KEYS__';
 
 function normalize(text) {
   return `${text.replaceAll('\r\n', '\n').replace(/\n*$/, '')}\n`;
@@ -158,7 +159,8 @@ async function main() {
     );
     await writeFile(
       join(staticDirectory, 'theme-default.js'),
-      normalize(await readFile(join(root, 'src', 'theme-default.js'), 'utf8')),
+      normalize((await readFile(join(root, 'src', 'theme-default.js'), 'utf8'))
+        .replace(themeDefaultKeysMarker, JSON.stringify(entries.map(([key]) => key)))),
     );
 
     for (const [source, output] of assetCopies) {

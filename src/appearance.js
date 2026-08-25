@@ -7,14 +7,10 @@
   const notice = document.querySelector('#araihu-storage-notice');
   if (!themeSelect || !modeButton) return;
 
-  const storageError = (error) => error instanceof DOMException && (
-    error.name === 'SecurityError' || error.name === 'QuotaExceededError'
-  );
   const safely = (operation, fallback) => {
     try {
       return operation();
-    } catch (error) {
-      if (!storageError(error)) throw error;
+    } catch {
       return fallback;
     }
   };

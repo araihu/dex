@@ -4,7 +4,7 @@
 
 **Goal:** Build and verify a thin, AraiHu-branded overlay image at `ghcr.io/araihu/dex` while preserving the official Dex `master` authentication frontend and logic.
 
-**Architecture:** Generate a deterministic CSS/asset overlay from pinned Goshtoso and AraiHu Assets releases, copy only shared header/footer and branded static files over a digest-pinned official Dex image, then validate `ARAIHU_DEX_THEME` in a minimal shell entrypoint before delegating to Dex's original entrypoint. The implementation never vendors or overrides flow templates.
+**Architecture:** Generate deterministic CSS/asset bytes from pinned Goshtoso and AraiHu Assets releases, copy only shared header/footer and branded static files over a digest-pinned official Dex image, then validate `ARAIHU_DEX_THEME` in a minimal shell entrypoint before delegating to Dex's original entrypoint. The implementation never vendors or overrides flow templates. Platform image manifests/configuration are reproducible; BuildKit attestation envelopes are verified by subject digest and may vary per invocation.
 
 **Tech Stack:** Docker BuildKit/buildx, POSIX `sh`, Node.js built-ins, Tailwind CSS 4.3.3, Playwright, Axe, Cosign, Syft/BuildKit SBOM and GitHub Actions.
 

@@ -128,6 +128,11 @@ wall-clock value. Trivy is a fail-closed `HIGH,CRITICAL` gate; it ignores only
 unfixed findings (`ignore-unfixed: true`) and retains the SARIF report as
 evidence.
 
+Reproducibility covers the generated frontend bytes and platform image
+manifests/configuration. BuildKit provenance and SBOM attestations may carry
+invocation-specific envelope metadata on independent rebuilds; release
+verification binds each attestation to the exact platform subject digest.
+
 The candidate reference is retained as an immutable audit alias after its
 temporary publication use (`candidate-${GITHUB_SHA}`). GHCR deletion is scoped
 to a package version or manifest digest; because stable aliases share the

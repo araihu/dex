@@ -12,7 +12,8 @@ commit `ab64ed778070e983cbb10cfc07ea4bb397d14312`. The image preserves Dex
 authentication behavior, templates, form semantics, TOTP flow, and WebAuthn
 JavaScript. It adds the released Goshtoso theme catalog, AraiHu brand assets, a
 small accessible client-side theme control, the established AraiHu
-browser-storage consent contract, and deterministic supply-chain evidence.
+browser-storage consent contract, and reproducible, verifiable supply-chain
+evidence.
 
 The implementation is not a Dex source fork. It derives from an upstream image pinned by multi-architecture digest, sets `DEX_FRONTEND_DIR=/srv/dex/web`, and overwrites only shared frontend files and branded assets already present in that filesystem tree. Disabling `DEX_FRONTEND_DIR` restores the embedded upstream frontend without changing the binary or stored identity data.
 
@@ -23,7 +24,7 @@ The implementation is not a Dex source fork. It derives from an upstream image p
 3. Preserve all Dex authentication logic and flow-specific frontend semantics.
 4. Preserve current Dex `master` TOTP enrollment/verification and WebAuthn registration/login behavior.
 5. Use released, verified material from `github.com/araihu/goshtoso` and `github.com/araihu/assets`.
-6. Build deterministic `linux/amd64` and `linux/arm64` OCI images with SBOM, provenance, and keyless signing.
+6. Build reproducible `linux/amd64` and `linux/arm64` platform image bytes and deterministic frontend assets, with SBOM, provenance, and keyless signing.
 7. Detect upstream frontend drift before it reaches a release.
 8. Keep rollback to the upstream frontend or upstream image immediate and data-neutral.
 
@@ -301,6 +302,13 @@ release commit's committer timestamp, not the runner wall clock. Trivy is a
 fail-closed `HIGH,CRITICAL` gate and ignores only unfixed findings, with its
 SARIF report retained as release evidence. Evidence collection and upload
 complete before stable aliases are promoted.
+
+Determinism is scoped to generated frontend bytes and the platform image
+manifests/configuration produced from the locked source and source-derived
+timestamp. BuildKit provenance and SBOM attestations are attached to the image
+index and may contain invocation-specific envelope metadata on independent
+rebuilds; verification binds each attestation to the exact platform subject
+digest rather than comparing those envelopes byte-for-byte.
 
 The `candidate-${GITHUB_SHA}` reference is temporary for the publication flow
 but retained as an immutable audit alias after promotion. GHCR deletion is

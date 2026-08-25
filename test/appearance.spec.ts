@@ -43,7 +43,7 @@ async function serveFixture(page: Page, runtimeDefault = 'araihu') {
     <label for="araihu-theme">Tema</label>
     <select id="araihu-theme" aria-label="Tema">${options}</select>
     <button class="araihu-mode-button" type="button" aria-label="Ativar modo escuro" aria-pressed="false">Modo</button>
-    <form method="post" action="/auth/local"><input name="login"><button>Entrar</button></form>
+    <div class="dex-container"><form method="post" action="/auth/local"><input name="login" autofocus><button>Entrar</button></form></div>
     <aside id="araihu-storage-notice" aria-label="Preferências de aparência">
       <button type="button" data-storage-choice="allowed">Permitir</button>
       <button type="button" data-storage-choice="denied">Não permitir</button>
@@ -154,6 +154,16 @@ test('deny removes only overlay appearance keys', async ({ page }) => {
   }))).toEqual({ theme: null, darkMode: null, unrelated: 'keep' });
   const cookie = (await page.context().cookies(origin)).find(({ name }) => name === 'gt_storage');
   expect(cookie).toMatchObject({ value: 'denied', path: '/', sameSite: 'Lax' });
+});
+
+test('notice dismissal restores the upstream autofocus target', async ({ page }) => {
+  await serveFixture(page);
+  await page.goto(loginURL);
+
+  await page.getByRole('button', { name: 'Não permitir' }).click();
+
+  await expect(page.getByLabel('Preferências de aparência')).toBeHidden();
+  await expect(page.locator('[name="login"]')).toBeFocused();
 });
 
 test('storage exceptions keep login and in-memory appearance usable', async ({ page }) => {

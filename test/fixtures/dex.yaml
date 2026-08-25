@@ -1,0 +1,121 @@
+issuer: {{ getenv "DEX_TEST_ISSUER" | required "DEX_TEST_ISSUER is required" | quote }}
+
+storage:
+  type: sqlite3
+  config:
+    file: {{ getenv "DEX_TEST_DB" | required "DEX_TEST_DB is required" | quote }}
+
+web:
+  http: 0.0.0.0:5556
+
+frontend:
+  issuer: AraiHu Dex
+
+logger:
+  level: debug
+  format: text
+
+sessions:
+  cookieName: dex_test_session
+  absoluteLifetime: 1h
+  validIfNotUsedFor: 30m
+  ssoSharedWithDefault: none
+
+oauth2:
+  grantTypes:
+    - authorization_code
+    - refresh_token
+    - urn:ietf:params:oauth:grant-type:device_code
+  responseTypes:
+    - code
+  skipApprovalScreen: false
+  alwaysShowLoginScreen: true
+  passwordConnector: local
+
+mfa:
+  authenticators:
+    - id: totp-1
+      type: TOTP
+      config:
+        issuer: AraiHu Dex Test
+    - id: webauthn-1
+      type: WebAuthn
+      config:
+        rpDisplayName: AraiHu Dex Test
+        rpID: localhost
+        rpOrigins:
+          - {{ getenv "DEX_TEST_ORIGIN" | required "DEX_TEST_ORIGIN is required" | quote }}
+        attestationPreference: none
+        userVerification: discouraged
+        timeout: 1s
+  defaultMFAChain:
+    - totp-1
+    - webauthn-1
+
+staticClients:
+  - id: araihu-test
+    name: AraiHu Test Client
+    secret: local-test-client-secret
+    redirectURIs:
+      - {{ getenv "DEX_TEST_REDIRECT_URI" | required "DEX_TEST_REDIRECT_URI is required" | quote }}
+      - /device/callback
+      - urn:ietf:wg:oauth:2.0:oob
+    postLogoutRedirectURIs:
+      - {{ getenv "DEX_TEST_REDIRECT_URI" | required "DEX_TEST_REDIRECT_URI is required" | quote }}
+
+enablePasswordDB: true
+staticPasswords:
+  - email: test@example.invalid
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: test-user
+    name: Test User
+    emailVerified: true
+    preferredUsername: test-user
+    groups:
+      - test-group
+    userID: 00000000-0000-4000-8000-000000000001
+  - email: device@example.invalid
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: device-user
+    name: Device Test User
+    emailVerified: true
+    preferredUsername: device-user
+    groups:
+      - test-group
+    userID: 00000000-0000-4000-8000-000000000002
+  - email: oob@example.invalid
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: oob-user
+    name: OOB Test User
+    emailVerified: true
+    preferredUsername: oob-user
+    groups:
+      - test-group
+    userID: 00000000-0000-4000-8000-000000000003
+  - email: visual@example.invalid
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: visual-user
+    name: Visual Test User
+    emailVerified: true
+    preferredUsername: visual-user
+    groups:
+      - test-group
+    userID: 00000000-0000-4000-8000-000000000004
+  - email: visual-device@example.invalid
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: visual-device-user
+    name: Visual Device Test User
+    emailVerified: true
+    preferredUsername: visual-device-user
+    groups:
+      - test-group
+    userID: 00000000-0000-4000-8000-000000000005
+  - email: visual-oob@example.invalid
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: visual-oob-user
+    name: Visual OOB Test User
+    emailVerified: true
+    preferredUsername: visual-oob-user
+    groups:
+      - test-group
+    userID: 00000000-0000-4000-8000-000000000006

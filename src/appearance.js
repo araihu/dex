@@ -93,9 +93,18 @@
       notice.hidden = false;
       return;
     }
+    const restoreFocus = notice.contains(document.activeElement);
     storageAllowed = choice === 'allowed';
     if (storageAllowed) persist();
     else clearPreferences();
     notice.hidden = true;
+    if (restoreFocus) {
+      const autofocus = document.querySelector('.dex-container [autofocus]');
+      const fallback = Array.from(document.querySelectorAll(
+        '.dex-container a[href], .dex-container button:not([disabled]), .dex-container input:not([type="hidden"]):not([disabled]), .dex-container select:not([disabled]), .dex-container textarea:not([disabled])',
+      )).find((element) => element.getClientRects().length > 0);
+      const target = autofocus?.getClientRects().length ? autofocus : fallback;
+      target?.focus();
+    }
   });
 })();

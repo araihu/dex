@@ -21,17 +21,21 @@ html.dark {
 
 .theme-navbar {
   display: flex;
+  height: auto;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem;
   border-bottom: 1px solid var(--color-outline);
   background: var(--color-surface-alt);
+  color: var(--color-on-surface);
+  overflow: visible;
 }
 
 .dark .theme-navbar {
   border-color: var(--color-outline-dark);
   background: var(--color-surface-dark-alt);
+  color: var(--color-on-surface-dark);
 }
 
 .theme-navbar__logo {
@@ -95,6 +99,11 @@ html.dark {
 .dex-container {
   width: min(100% - 2rem, 32rem);
   margin: 2rem auto;
+  color: var(--color-on-surface);
+}
+
+.dark .dex-container {
+  color: var(--color-on-surface-dark);
 }
 
 .theme-panel {
@@ -182,6 +191,14 @@ html.dark {
   color: var(--color-on-surface-dark-strong);
 }
 
+.theme-btn-provider .dex-btn-text {
+  background: var(--color-surface);
+}
+
+.dark .theme-btn-provider .dex-btn-text {
+  background: var(--color-surface-dark);
+}
+
 .theme-btn--success {
   border-color: var(--color-success-action);
   background: var(--color-success-action);
@@ -264,12 +281,14 @@ html.dark {
   color: var(--color-on-surface-dark-strong);
 }
 
-:where(a, button, input, select):focus-visible {
+:is(.araihu-appearance-controls, .dex-container, .araihu-storage-notice)
+  :is(a, button, input, select):focus-visible {
   outline: 3px solid var(--color-primary);
   outline-offset: 2px;
 }
 
-.dark :where(a, button, input, select):focus-visible {
+.dark :is(.araihu-appearance-controls, .dex-container, .araihu-storage-notice)
+  :is(a, button, input, select):focus-visible {
   outline-color: var(--color-primary-dark);
 }
 

@@ -21,6 +21,21 @@ edited or deployment performed without separate explicit approval.
 Green tests, a local build, review approval, or this repository's existence do
 not authorize any of those actions.
 
+## Verified source cache
+
+[`versions.env`](versions.env) is the single source lock. It pins the approved
+Dex commit/archive, Goshtoso module/theme/catalog, AraiHu Assets release and
+member manifest, plus the frontend tool baselines. The POSIX acquisition
+boundary verifies every checksum before writing the cache:
+
+```sh
+scripts/fetch-sources.sh
+```
+
+Use `FETCH_CACHE` for an alternate cache and `VERSIONS_FILE` for an isolated
+fixture lock. The script never reads sibling checkouts or copies unverified
+source files.
+
 ## License and notices
 
 This overlay is licensed under [Apache-2.0](LICENSE). See [NOTICE](NOTICE) for

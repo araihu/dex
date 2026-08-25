@@ -33,6 +33,7 @@ const expectedFiles = [
   'static/favicon.svg',
   'static/icons.svg',
   'static/theme-allowlist.txt',
+  'static/theme-default.js',
   'templates/footer.html',
   'templates/header.html',
 ];
@@ -58,6 +59,7 @@ test('generation emits only the approved deterministic overlay', async () => {
     'favicon.svg',
     'icons.svg',
     'theme-allowlist.txt',
+    'theme-default.js',
   ]);
 
   assert.equal(await bytes('static/theme-allowlist.txt').then(String), expectedCatalog);
@@ -73,9 +75,15 @@ test('generation emits only the approved deterministic overlay', async () => {
   assert.match(header, /<label[^>]+for="araihu-theme">Tema<\/label>/);
   assert.match(header, /<select[^>]+id="araihu-theme"[^>]+aria-label="Tema"/);
   assert.match(header, /<button[^>]+type="button"[^>]+aria-label="Ativar modo escuro"[^>]+aria-pressed="false"/);
-  assert.deepEqual([...header.matchAll(/<script\b[^>]*>/g)].map((match) => match[0]), [
+  const scripts = [...header.matchAll(/<script\b[^>]*>/g)].map((match) => match[0]);
+  assert.deepEqual(scripts, [
+    '<script src="{{ url .ReqPath "static/theme-default.js" }}">',
     '<script defer src="{{ url .ReqPath "static/appearance.js" }}">',
   ]);
+  assert.ok(
+    header.indexOf('static/theme-default.js') < header.indexOf('static/appearance.js'),
+    'runtime default must load before the appearance controller',
+  );
   assert.equal((header.match(/<option value=/g) ?? []).length, 16);
   assert.doesNotMatch(header, /{{ url \.ReqPath logo }}/);
   assert.match(header, /{{ url \.ReqPath "static\/araihu-logo\.svg" }}/);
@@ -88,6 +96,7 @@ test('generation emits only the approved deterministic overlay', async () => {
 
   const provenance = new Map([
     ['static/appearance.js', 'src/appearance.js'],
+    ['static/theme-default.js', 'src/theme-default.js'],
     ['static/araihu-logo.svg', '.cache/sources/assets/brand/araihu/logo/adaptive-transparent-optical.svg'],
     ['static/favicon.svg', '.cache/sources/assets/platform/web/araihu/favicon.svg'],
     ['static/favicon-32.png', '.cache/sources/assets/platform/web/araihu/favicon-32.png'],
@@ -95,6 +104,11 @@ test('generation emits only the approved deterministic overlay', async () => {
   for (const [output, source] of provenance) {
     assert.deepEqual(await bytes(output), await readFile(new URL(source, root)), output);
   }
+
+  assert.equal(
+    await bytes('static/theme-default.js').then(String),
+    'window.__araihuDexDefaultTheme = "araihu";\n',
+  );
 
   const iconSource = await readFile(new URL('.cache/sources/assets/icons/ui/sprite.svg', root), 'utf8');
   const icons = await bytes('static/icons.svg').then(String);

@@ -156,6 +156,10 @@ async function main() {
       join(staticDirectory, 'appearance.js'),
       normalize(await readFile(join(root, 'src', 'appearance.js'), 'utf8')),
     );
+    await writeFile(
+      join(staticDirectory, 'theme-default.js'),
+      normalize(await readFile(join(root, 'src', 'theme-default.js'), 'utf8')),
+    );
 
     for (const [source, output] of assetCopies) {
       await copyFile(join(cache, 'assets', source), join(staticDirectory, output));

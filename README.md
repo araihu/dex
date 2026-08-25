@@ -71,14 +71,19 @@ opens a pull request, tags, publishes, or touches homelab state.
 The report target is fixed to that repository-owned path; outside paths and
 symlinked report files or parents are rejected before preparation.
 
-The weekly/manual upstream workflow runs preparation plus every CI gate in a
-credentialless, read-only job. A second read-only job downloads the immutable
-artifact ID and validates its checksums, exact base/result, patch, path
-allowlist, and report/lock consistency. Only after that validation succeeds can
-a separate write-scoped job check the bound result again, configure credentials,
-and create an update branch and pull request with GitHub's token and `gh`. A
-pull request still requires human screenshot review and grants no merge,
-release, publication, or deployment authority.
+The weekly/manual upstream workflow runs preparation plus every CI gate with
+only `contents: read` and `packages: read`. Its checkout uses the explicit
+job-scoped `${{ github.token }}` and `persist-credentials: false`, so private
+repositories work without retaining credentials. Cosign trust verification
+remains public and token-free. A second `contents: read` job downloads the
+immutable artifact ID and validates its checksums, exact base/result, patch,
+path allowlist, and report/lock consistency. Only after that validation succeeds
+can a separate write-scoped job start. It downloads the immutable-ID artifact
+and rechecks the full artifact/base/hash/path/report binding before checkout,
+then checks out without persisted credentials, applies and rechecks the patch,
+configures Git credentials, and creates the update branch and pull request with
+GitHub's token and `gh`. A pull request still requires human screenshot review
+and grants no merge, release, publication, or deployment authority.
 
 ## License and notices
 

@@ -36,6 +36,43 @@ Use `FETCH_CACHE` for an alternate cache and `VERSIONS_FILE` for an isolated
 fixture lock. The script never reads sibling checkouts or copies unverified
 source files.
 
+## CI and upstream updates
+
+Pull requests and `main` pushes run source, generation, shell, Node,
+multi-architecture build, filesystem-overlay, real-image, visual,
+accessibility, and vulnerability checks. CI builds only into the local Docker
+daemon, OCI files, and local BuildKit caches. It has no registry login, image
+publication, tag, attestation generation, or signing step.
+
+Verify the locked official Dex image's revision, Cosign identity, and SLSA
+provenance without preparing an update:
+
+```sh
+scripts/update-lock.sh --verify-lock
+```
+
+To prepare the current verified Dex `master` commit locally, install
+dependencies and the Playwright browser first, ensure `gh`, `cosign`, Docker
+Buildx, Go, Node, `jq`, and `curl` are available, then run:
+
+```sh
+npm ci
+npx playwright install chromium
+scripts/update-lock.sh
+```
+
+The update command works in a staged tree and copies changes back only after
+signature/provenance, exact template inventory, shared-template rebase,
+unchanged WebAuthn JavaScript, generation, filesystem-overlay, semantic,
+visual, and accessibility checks pass. It updates local locks, fixtures,
+generated files, and `.cache/update-report.md`; it never commits, pushes,
+opens a pull request, tags, publishes, or touches homelab state.
+
+The weekly/manual upstream workflow runs the same preparation plus every CI
+gate before creating an update branch and pull request with GitHub's token and
+`gh`. A pull request still requires human screenshot review and grants no
+merge, release, publication, or deployment authority.
+
 ## License and notices
 
 This overlay is licensed under [Apache-2.0](LICENSE). See [NOTICE](NOTICE) for

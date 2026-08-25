@@ -45,15 +45,16 @@ daemon, OCI files, and local BuildKit caches. It has no registry login, image
 publication, tag, attestation generation, or signing step.
 
 Verify the locked official Dex image's revision, Cosign identity, and SLSA
-provenance without preparing an update:
+provenance from public registry data, without a GitHub token or update
+preparation:
 
 ```sh
 scripts/update-lock.sh --verify-lock
 ```
 
 To prepare the current verified Dex `master` commit locally, install
-dependencies and the Playwright browser first, ensure `gh`, `cosign`, Docker
-Buildx, Go, Node, `jq`, and `curl` are available, then run:
+dependencies and the Playwright browser first, ensure `cosign`, Docker Buildx,
+Go, Node, `jq`, and `curl` are available, then run:
 
 ```sh
 npm ci
@@ -67,14 +68,17 @@ unchanged WebAuthn JavaScript, generation, filesystem-overlay, semantic,
 visual, and accessibility checks pass. It updates local locks, fixtures,
 generated files, and `.cache/update-report.md`; it never commits, pushes,
 opens a pull request, tags, publishes, or touches homelab state.
+The report target is fixed to that repository-owned path; outside paths and
+symlinked report files or parents are rejected before preparation.
 
 The weekly/manual upstream workflow runs preparation plus every CI gate in a
-credentialless, read-only job. Only after those gates pass does a separate
-write-scoped job validate the checksum-bound patch artifact against the exact
-verified base/result, configure credentials, and create an update branch and
-pull request with GitHub's token and `gh`. A pull request still requires human
-screenshot review and grants no merge, release, publication, or deployment
-authority.
+credentialless, read-only job. A second read-only job downloads the immutable
+artifact ID and validates its checksums, exact base/result, patch, path
+allowlist, and report/lock consistency. Only after that validation succeeds can
+a separate write-scoped job check the bound result again, configure credentials,
+and create an update branch and pull request with GitHub's token and `gh`. A
+pull request still requires human screenshot review and grants no merge,
+release, publication, or deployment authority.
 
 ## License and notices
 

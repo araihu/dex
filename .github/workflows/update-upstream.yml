@@ -76,8 +76,6 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Prepare and verify update locally
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: scripts/update-lock.sh
 
       - name: Stage prepared files for drift checks
@@ -86,8 +84,6 @@ jobs:
             test/fetch-sources_test.sh test/image-overlay_test.sh web
 
       - name: Verify lock and generated drift
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           scripts/update-lock.sh --verify-lock
           scripts/fetch-sources.sh
@@ -207,15 +203,18 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  publish:
-    name: Publish verified update proposal
+  validate:
+    name: Validate prepared artifact read-only
     needs: verify
     if: ${{ needs.verify.result == 'success' && needs.verify.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.validate.outputs.artifact_id }}
+      base_commit: ${{ steps.validate.outputs.base_commit }}
+      binding_sha256: ${{ steps.validate.outputs.binding_sha256 }}
 
     steps:
       - name: Check out verified base without persisted credentials
@@ -242,6 +241,7 @@ jobs:
           EXPECTED_NEW_COMMIT: ${{ needs.verify.outputs.new_commit }}
           EXPECTED_NEW_DIGEST: ${{ needs.verify.outputs.new_digest }}
           EXPECTED_WORKFLOW_COMMIT: ${{ github.sha }}
+          EXPECTED_ARTIFACT_ID: ${{ needs.verify.outputs.artifact_id }}
         run: |
           set -euo pipefail
           bundle=.cache/prepared-update
@@ -309,6 +309,127 @@ jobs:
           grep -F -x -- "- New digest: \`$new_digest\`" "$report"
           grep -F -x -- "- Generated manifest digest: \`sha256:$manifest_sha256\`" "$report"
 
+          binding_sha256=$(
+            printf '%s\n' \
+              "artifact_id=$EXPECTED_ARTIFACT_ID" \
+              "base_commit=$base_commit" \
+              "new_commit=$new_commit" \
+              "new_digest=$new_digest" \
+              "patch_sha256=$patch_sha256" \
+              "report_sha256=$report_sha256" \
+              "manifest_sha256=$manifest_sha256" \
+              "metadata_sha256=$EXPECTED_METADATA_SHA256" |
+              sha256sum | awk '{print $1}'
+          )
+          echo "artifact_id=$EXPECTED_ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          echo "base_commit=$base_commit" >> "$GITHUB_OUTPUT"
+          echo "binding_sha256=$binding_sha256" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish validated update proposal
+    needs: validate
+    if: ${{ needs.validate.result == 'success' && needs.validate.outputs.binding_sha256 != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Check out validated base without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.base_commit }}
+          persist-credentials: false
+
+      - name: Download validated prepared update
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.validate.outputs.artifact_id }}
+          path: .cache/prepared-update
+
+      - name: Recheck validated binding
+        id: recheck
+        shell: bash
+        env:
+          EXPECTED_ARTIFACT_ID: ${{ needs.validate.outputs.artifact_id }}
+          EXPECTED_BASE_COMMIT: ${{ needs.validate.outputs.base_commit }}
+          EXPECTED_BINDING_SHA256: ${{ needs.validate.outputs.binding_sha256 }}
+        run: |
+          set -euo pipefail
+          bundle=.cache/prepared-update
+          metadata=$bundle/metadata.env
+          patch=$bundle/prepared-update.patch
+          report=$bundle/update-report.md
+          manifest=$bundle/manifest.sha256
+          test -f "$metadata"
+          test -f "$patch"
+          test -f "$report"
+          test -f "$manifest"
+
+          metadata_value() {
+            local key=$1
+            local count
+            count=$(awk -F= -v key="$key" '$1 == key { count++ } END { print count + 0 }' "$metadata")
+            test "$count" -eq 1
+            awk -v prefix="$key=" 'index($0, prefix) == 1 { print substr($0, length(prefix) + 1); exit }' "$metadata"
+          }
+
+          test "$(wc -l < "$metadata" | tr -d ' ')" -eq 7
+          test "$(metadata_value format)" = 1
+          base_commit=$(metadata_value base_commit)
+          new_commit=$(metadata_value new_commit)
+          new_digest=$(metadata_value new_digest)
+          patch_sha256=$(metadata_value patch_sha256)
+          report_sha256=$(metadata_value report_sha256)
+          manifest_sha256=$(metadata_value manifest_sha256)
+          metadata_sha256=$(sha256sum "$metadata" | awk '{print $1}')
+          test "$base_commit" = "$EXPECTED_BASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$base_commit"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$patch_sha256"
+          test "$(sha256sum "$report" | awk '{print $1}')" = "$report_sha256"
+          test "$(sha256sum "$manifest" | awk '{print $1}')" = "$manifest_sha256"
+          [[ "$new_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$new_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          binding_sha256=$(
+            printf '%s\n' \
+              "artifact_id=$EXPECTED_ARTIFACT_ID" \
+              "base_commit=$base_commit" \
+              "new_commit=$new_commit" \
+              "new_digest=$new_digest" \
+              "patch_sha256=$patch_sha256" \
+              "report_sha256=$report_sha256" \
+              "manifest_sha256=$manifest_sha256" \
+              "metadata_sha256=$metadata_sha256" |
+              sha256sum | awk '{print $1}'
+          )
+          test "$binding_sha256" = "$EXPECTED_BINDING_SHA256"
+
+          git apply --check "$patch"
+          git apply --index "$patch"
+          test "$(git diff --cached --binary --full-index | sha256sum | awk '{print $1}')" = "$patch_sha256"
+          git diff --exit-code
+          git diff --cached --check
+
+          changed=false
+          while IFS= read -r -d '' path; do
+            changed=true
+            case "$path" in
+              versions.env|Dockerfile|src/header.html|src/footer.html) ;;
+              test/fetch-sources_test.sh|test/image-overlay_test.sh) ;;
+              web/*) ;;
+              *) echo "unexpected prepared path during recheck: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --cached --name-only -z)
+          test "$changed" = true
+
+          test "$(sed -n 's/^DEX_COMMIT=//p' versions.env)" = "$new_commit"
+          test "$(sed -n 's|^DEX_IMAGE=ghcr.io/dexidp/dex:master@||p' versions.env)" = "$new_digest"
+          grep -F -x -- "- New commit: \`$new_commit\`" "$report"
+          grep -F -x -- "- New digest: \`$new_digest\`" "$report"
+          grep -F -x -- "- Generated manifest digest: \`sha256:$manifest_sha256\`" "$report"
+
           mkdir -p .cache
           cp "$report" .cache/update-report.md
           echo "new_commit=$new_commit" >> "$GITHUB_OUTPUT"
@@ -323,7 +444,7 @@ jobs:
         id: branch
         env:
           GH_TOKEN: ${{ github.token }}
-          SHORT_COMMIT: ${{ steps.validate.outputs.short_commit }}
+          SHORT_COMMIT: ${{ steps.recheck.outputs.short_commit }}
         run: |
           branch="automation/update-dex-$SHORT_COMMIT"
           git switch -c "$branch"
@@ -336,7 +457,7 @@ jobs:
       - name: Open update pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          SHORT_COMMIT: ${{ steps.validate.outputs.short_commit }}
+          SHORT_COMMIT: ${{ steps.recheck.outputs.short_commit }}
         run: |
           gh pr create \
             --base main \

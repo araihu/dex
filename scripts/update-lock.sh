@@ -6,9 +6,11 @@ die() {
 	exit 1
 }
 
-repo=${UPDATE_ROOT:-$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)}
+repo_input=${UPDATE_ROOT:-$(dirname "$0")/..}
+repo=$(CDPATH= cd -- "$repo_input" && pwd -P) || die "repository root not found: $repo_input"
 lock_file=$repo/versions.env
-report_file=${UPDATE_REPORT_FILE:-$repo/.cache/update-report.md}
+canonical_report_file=$repo/.cache/update-report.md
+report_file=${UPDATE_REPORT_FILE:-$canonical_report_file}
 official_image=ghcr.io/dexidp/dex:master
 official_repository=dexidp/dex
 official_identity=https://github.com/dexidp/dex/.github/workflows/artifacts.yaml@refs/heads/master
@@ -22,7 +24,22 @@ case "$#" in
 	*) die 'usage: scripts/update-lock.sh [--verify-lock]' ;;
 esac
 
-for command_name in cosign curl docker gh git jq npm tar; do
+assert_report_path_safe() {
+	[ "$report_file" = "$canonical_report_file" ] ||
+		die 'UPDATE_REPORT_FILE must use .cache/update-report.md inside the repository'
+	[ ! -L "$repo/.cache" ] || die 'update report parent must not be a symlink'
+	if [ -e "$repo/.cache" ]; then
+		[ -d "$repo/.cache" ] || die 'update report parent must be a directory'
+	fi
+	[ ! -L "$report_file" ] || die 'update report must not be a symlink'
+	if [ -e "$report_file" ]; then
+		[ -f "$report_file" ] || die 'update report must be a regular file'
+	fi
+}
+
+assert_report_path_safe
+
+for command_name in cosign curl docker git jq npm tar; do
 	command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
 done
 [ -f "$lock_file" ] || die "lock file not found: $lock_file"
@@ -96,13 +113,71 @@ snapshot_git_metadata() {
 	} | LC_ALL=C sort >"$destination" || die 'cannot snapshot Git metadata'
 }
 
+restore_git_metadata() {
+	restore_status=0
+	if [ -L "$git_config_file" ]; then
+		restore_status=1
+	elif [ -f "$work/git-config.present" ]; then
+		cp -p "$work/git-config.before" "$git_config_file" || restore_status=1
+	else
+		rm -f "$git_config_file" || restore_status=1
+	fi
+
+	git -C "$repo" for-each-ref --format='%(refname) %(objectname)' \
+		>"$work/git-refs.current" || restore_status=1
+	while IFS=' ' read -r ref object; do
+		[ -n "$ref" ] || continue
+		if ! awk -v ref="$ref" '$1 == ref { found = 1 } END { exit !found }' \
+			"$work/git-refs.before"; then
+			git -C "$repo" update-ref -d "$ref" || restore_status=1
+		fi
+	done <"$work/git-refs.current"
+	while IFS=' ' read -r ref object; do
+		[ -n "$ref" ] || continue
+		git -C "$repo" update-ref "$ref" "$object" || restore_status=1
+	done <"$work/git-refs.before"
+
+	if [ -f "$work/git-head-symbolic.present" ]; then
+		head_target=$(cat "$work/git-head-symbolic.before")
+		git -C "$repo" symbolic-ref HEAD "$head_target" || restore_status=1
+	else
+		head_commit=$(cat "$work/git-head.before")
+		git -C "$repo" update-ref --no-deref HEAD "$head_commit" || restore_status=1
+	fi
+	[ "$restore_status" -eq 0 ]
+}
+
 assert_git_metadata_unchanged() {
 	snapshot_git_metadata "$work/git-metadata.current"
-	cmp -s "$work/git-metadata.before" "$work/git-metadata.current" ||
+	if ! cmp -s "$work/git-metadata.before" "$work/git-metadata.current"; then
+		restore_git_metadata || die 'Git metadata changed and restoration failed'
+		snapshot_git_metadata "$work/git-metadata.restored"
+		cmp -s "$work/git-metadata.before" "$work/git-metadata.restored" ||
+			die 'Git metadata changed and restoration was incomplete'
 		die 'Git HEAD, refs, tags, or remotes changed during preparation'
+	fi
 }
 
 snapshot_git_metadata "$work/git-metadata.before"
+git -C "$repo" for-each-ref --format='%(refname) %(objectname)' >"$work/git-refs.before" ||
+	die 'cannot snapshot Git refs'
+git -C "$repo" rev-parse HEAD >"$work/git-head.before" || die 'cannot snapshot Git HEAD'
+if git -C "$repo" symbolic-ref -q HEAD >"$work/git-head-symbolic.before"; then
+	: >"$work/git-head-symbolic.present"
+fi
+git_common_dir=$(git -C "$repo" rev-parse --git-common-dir) || die 'cannot locate Git metadata'
+case "$git_common_dir" in
+	/*) ;;
+	*) git_common_dir=$repo/$git_common_dir ;;
+esac
+git_common_dir=$(CDPATH= cd -- "$git_common_dir" && pwd -P) || die 'cannot resolve Git metadata'
+git_config_file=$git_common_dir/config
+[ ! -L "$git_config_file" ] || die 'Git config must not be a symlink'
+if [ -e "$git_config_file" ]; then
+	[ -f "$git_config_file" ] || die 'Git config must be a regular file'
+	cp -p "$git_config_file" "$work/git-config.before" || die 'cannot snapshot Git config'
+	: >"$work/git-config.present"
+fi
 
 write_prefixed_line() {
 	file=$1
@@ -172,8 +247,11 @@ if [ "$mode" = verify ]; then
 	new_image=$old_image
 	manifest_ref=$old_image
 else
-	new_commit=$(gh api "repos/$official_repository/commits/master" --jq .sha) ||
+	commit_json=$(curl -fsSL --retry 3 --retry-delay 1 \
+		"https://api.github.com/repos/$official_repository/commits/master") ||
 		die 'cannot resolve Dex master commit'
+	new_commit=$(printf '%s\n' "$commit_json" | jq -er '.sha') ||
+		die 'cannot read resolved Dex master commit'
 	require_commit "$new_commit" 'resolved Dex commit'
 	manifest_ref=$official_image
 fi
@@ -219,30 +297,34 @@ jq -e --arg digest "$new_digest" '
 	)] | length > 0
 ' "$work/cosign.json" >/dev/null || die 'official Dex image signature subject mismatch'
 
-gh attestation verify "oci://ghcr.io/dexidp/dex@$new_digest" \
-	--repo "$official_repository" \
-	--cert-identity "$official_identity" \
-	--cert-oidc-issuer "$official_issuer" \
-	--source-ref refs/heads/master \
-	--source-digest "$new_commit" \
-	--predicate-type https://slsa.dev/provenance/v1 \
-	--format json >"$work/provenance.json" ||
+cosign verify-attestation \
+	--certificate-identity "$official_identity" \
+	--certificate-oidc-issuer "$official_issuer" \
+	--certificate-github-workflow-repository "$official_repository" \
+	--certificate-github-workflow-ref refs/heads/master \
+	--certificate-github-workflow-sha "$new_commit" \
+	--type slsaprovenance1 \
+	--output json "$new_image" >"$work/provenance-envelope.json" ||
 	die 'official Dex provenance verification failed'
+jq -s -e '[.[] | .payload | @base64d | fromjson]' "$work/provenance-envelope.json" \
+	>"$work/provenance.json" || die 'official Dex provenance payload is invalid'
 digest_hex=${new_digest#sha256:}
 jq -e \
 	--arg identity "$official_identity" \
-	--arg issuer "$official_issuer" \
+	--arg repository "https://github.com/$official_repository" \
 	--arg commit "$new_commit" \
 	--arg digest "$digest_hex" '
 	[.[] | select(
-		.verificationResult.statement.predicateType == "https://slsa.dev/provenance/v1"
-		and any(.verificationResult.statement.subject[];
+		._type == "https://in-toto.io/Statement/v1"
+		and .predicateType == "https://slsa.dev/provenance/v1"
+		and any(.subject[];
 			.name == "ghcr.io/dexidp/dex" and .digest.sha256 == $digest)
-		and .verificationResult.signature.certificate.subjectAlternativeName == $identity
-		and .verificationResult.signature.certificate.issuer == $issuer
-		and .verificationResult.signature.certificate.githubWorkflowSHA == $commit
-		and .verificationResult.signature.certificate.sourceRepositoryDigest == $commit
-		and .verificationResult.signature.certificate.sourceRepositoryRef == "refs/heads/master"
+		and .predicate.runDetails.builder.id == $identity
+		and .predicate.buildDefinition.externalParameters.workflow.repository == $repository
+		and .predicate.buildDefinition.externalParameters.workflow.ref == "refs/heads/master"
+		and any(.predicate.buildDefinition.resolvedDependencies[];
+			.uri == "git+https://github.com/dexidp/dex@refs/heads/master"
+			and .digest.gitCommit == $commit)
 	)] | length > 0
 ' "$work/provenance.json" >/dev/null || die 'official Dex provenance identity mismatch'
 
@@ -376,6 +458,7 @@ src/footer.html
 test/image-overlay_test.sh
 test/fetch-sources_test.sh'
 install_backup=$work/install-backup
+assert_report_path_safe
 mkdir -p "$install_backup/files"
 for relative_file in $owned_files; do
 	[ -f "$repo/$relative_file" ] || die "prepared path is missing: $relative_file"
@@ -404,15 +487,19 @@ restore_install() {
 	done
 	rm -rf "$repo/web" || restore_status=1
 	cp -R "$install_backup/web" "$repo/web" || restore_status=1
-	rm -rf "$repo/.cache/sources" || restore_status=1
-	if [ -f "$install_backup/sources.present" ]; then
-		mkdir -p "$repo/.cache" || restore_status=1
-		cp -R "$install_backup/sources" "$repo/.cache/sources" || restore_status=1
-	fi
-	rm -f "$report_file" || restore_status=1
-	if [ -f "$install_backup/report.present" ]; then
-		mkdir -p "$(dirname "$report_file")" || restore_status=1
-		cp -p "$install_backup/report" "$report_file" || restore_status=1
+	if [ -L "$repo/.cache" ] || { [ -e "$repo/.cache" ] && [ ! -d "$repo/.cache" ]; }; then
+		restore_status=1
+	else
+		rm -rf "$repo/.cache/sources" || restore_status=1
+		if [ -f "$install_backup/sources.present" ]; then
+			mkdir -p "$repo/.cache" || restore_status=1
+			cp -R "$install_backup/sources" "$repo/.cache/sources" || restore_status=1
+		fi
+		rm -f "$report_file" || restore_status=1
+		if [ -f "$install_backup/report.present" ]; then
+			mkdir -p "$(dirname "$report_file")" || restore_status=1
+			cp -p "$install_backup/report" "$report_file" || restore_status=1
+		fi
 	fi
 	[ "$restore_status" -eq 0 ]
 }
@@ -435,11 +522,13 @@ rm -rf "$repo/web"
 cp -R "$stage/web" "$repo/web" || die 'cannot install generated web tree'
 install_checkpoint after-web
 
+assert_report_path_safe
 mkdir -p "$repo/.cache"
 rm -rf "$repo/.cache/sources"
 cp -R "$stage/.cache/sources" "$repo/.cache/sources" || die 'cannot install source cache'
 install_checkpoint after-cache
 
+assert_report_path_safe
 mkdir -p "$(dirname "$report_file")"
 cp -p "$report" "$report_file" || die 'cannot install update report'
 install_checkpoint after-report

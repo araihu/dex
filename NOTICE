@@ -1,0 +1,23 @@
+AraiHu Dex Overlay
+Copyright 2026 AraiHu contributors
+
+This repository contains an Apache License 2.0-licensed overlay for Dex.
+
+Dex is Copyright The Dex Authors and licensed under the Apache License 2.0.
+The overlay uses the official Dex container as its upstream base; Dex remains
+responsible for authentication, storage, connector, session, MFA, API, and
+protocol behavior.
+
+Goshtoso theme material is Copyright AraiHu contributors and licensed under
+the MIT License. Only released theme-token material is consumed; no Goshtoso
+runtime assets or components are included.
+
+AraiHu Assets are licensed under Apache License 2.0 unless a more specific
+notice applies. AraiHu names, logos, and other brand assets remain subject to
+AraiHu brand terms. AraiHu organization repositories are authorized to use and
+redistribute those assets as part of their products and release artifacts.
+
+Heroicons used by this overlay are licensed under the MIT License.
+
+The complete source and third-party notices shipped in a release identify the
+exact released materials included in that artifact.

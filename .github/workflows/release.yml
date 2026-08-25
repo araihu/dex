@@ -49,12 +49,25 @@ jobs:
           test "$image" = ghcr.io/araihu/dex
           upstream_digest=${DEX_IMAGE##*@}
           [[ "$upstream_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          source_date_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
+          [[ "$source_date_epoch" =~ ^[0-9]+$ ]]
+          created=$(python3 - "$source_date_epoch" <<'PY'
+          import datetime
+          import sys
+
+          timestamp = datetime.datetime.fromtimestamp(
+              int(sys.argv[1]), datetime.timezone.utc
+          )
+          print(timestamp.isoformat(timespec="seconds").replace("+00:00", "Z"))
+          PY
+          )
+          [[ "$created" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
           candidate="$image:candidate-${GITHUB_SHA}"
 
           {
             echo "version=$version"
             echo "created=$created"
+            echo "source_date_epoch=$source_date_epoch"
             echo "candidate=$candidate"
             echo "node=$NODE_VERSION"
             echo "npm=$NPM_VERSION"
@@ -142,6 +155,7 @@ jobs:
             --platform linux/amd64 \
             --load \
             --tag "$LOCAL_IMAGE" \
+            --build-arg "SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}" \
             "${label_args[@]}" \
             .
 
@@ -159,6 +173,9 @@ jobs:
           image-ref: araihu-dex-release:${{ github.sha }}
           format: sarif
           output: release-evidence/vulnerability-report.sarif
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
 
       - name: Log in to GHCR after all local gates
         id: login
@@ -175,6 +192,7 @@ jobs:
           context: .
           platforms: ${{ env.PLATFORMS }}
           labels: ${{ steps.release.outputs.labels }}
+          build-args: SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}
           outputs: |
             type=oci,dest=${{ runner.temp }}/release.oci.tar
             type=registry,name=${{ steps.release.outputs.candidate }},push=true
@@ -242,6 +260,50 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/verify-release.sh remote "$CANDIDATE"
 
+      - name: Collect immutable release evidence
+        id: evidence
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" > release-evidence/release-manifest.json
+          sha256sum release-evidence/release-manifest.json > release-evidence/release-manifest.json.sha256
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{ json .SBOM }}' |
+            jq . > release-evidence/sbom.spdx.json
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{ json .Provenance }}' |
+            jq . > release-evidence/provenance.slsa.json
+          cp web/manifest.sha256 release-evidence/frontend-manifest.sha256
+          sha256sum release-evidence/frontend-manifest.sha256 > release-evidence/frontend-manifest.sha256.sha256
+          cp "$ATTESTATION_BUNDLE" release-evidence/github-attestation.sigstore.json
+          for evidence_file in \
+            release-evidence/vulnerability-report.sarif \
+            release-evidence/release-manifest.json \
+            release-evidence/release-manifest.json.sha256 \
+            release-evidence/sbom.spdx.json \
+            release-evidence/provenance.slsa.json \
+            release-evidence/frontend-manifest.sha256 \
+            release-evidence/frontend-manifest.sha256.sha256 \
+            release-evidence/github-attestation.sigstore.json; do
+            test -s "$evidence_file"
+          done
+
+      - name: Upload release evidence
+        id: upload
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-${{ github.ref_name }}
+          path: |
+            release-evidence/
+            web/manifest.sha256
+            test/screenshots/araihu/
+            test-results/
+            playwright-report/
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Promote verified candidate to stable tags
         id: promote
         env:
@@ -263,36 +325,3 @@ jobs:
           DIGEST: ${{ steps.candidate.outputs.digest }}
           GH_TOKEN: ${{ github.token }}
         run: scripts/verify-release.sh remote "$IMAGE@$DIGEST"
-
-      - name: Collect immutable release evidence
-        id: evidence
-        env:
-          IMAGE: ${{ env.IMAGE }}
-          DIGEST: ${{ steps.candidate.outputs.digest }}
-          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
-        run: |
-          set -eu
-          docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" > release-evidence/release-manifest.json
-          sha256sum release-evidence/release-manifest.json > release-evidence/release-manifest.json.sha256
-          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{ json .SBOM }}' |
-            jq . > release-evidence/sbom.spdx.json
-          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{ json .Provenance }}' |
-            jq . > release-evidence/provenance.slsa.json
-          cp web/manifest.sha256 release-evidence/frontend-manifest.sha256
-          sha256sum release-evidence/frontend-manifest.sha256 > release-evidence/frontend-manifest.sha256.sha256
-          cp "$ATTESTATION_BUNDLE" release-evidence/github-attestation.sigstore.json
-
-      - name: Upload release evidence
-        id: upload
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-evidence-${{ github.ref_name }}
-          path: |
-            release-evidence/
-            web/manifest.sha256
-            test/screenshots/araihu/
-            test-results/
-            playwright-report/
-          if-no-files-found: warn
-          retention-days: 90

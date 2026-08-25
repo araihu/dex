@@ -117,6 +117,18 @@ GitHub build provenance, and a keyless Cosign signature bound to
 the OCI manifest and checksum, frontend checksums, SBOM, provenance, scan, and
 screenshot evidence.
 
+The OCI creation label and `SOURCE_DATE_EPOCH` come from the release commit's
+committer timestamp, so rerunning a release for the same source does not add a
+wall-clock value. Trivy is a fail-closed `HIGH,CRITICAL` gate; it ignores only
+unfixed findings (`ignore-unfixed: true`) and retains the SARIF report as
+evidence.
+
+The candidate reference is retained as an immutable audit alias after its
+temporary publication use (`candidate-${GITHUB_SHA}`). GHCR deletion is scoped
+to a package version or manifest digest; because stable aliases share the
+candidate digest, deleting the candidate could delete stable aliases. The
+workflow therefore performs no candidate cleanup mutation.
+
 Verify a candidate OCI archive without registry access or publication:
 
 ```sh

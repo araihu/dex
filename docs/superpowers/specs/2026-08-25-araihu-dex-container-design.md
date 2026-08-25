@@ -288,6 +288,18 @@ Each stable release produces:
 - screenshot matrix as workflow artifacts;
 - vulnerability scan report.
 
+The OCI creation label and BuildKit `SOURCE_DATE_EPOCH` derive from the exact
+release commit's committer timestamp, not the runner wall clock. Trivy is a
+fail-closed `HIGH,CRITICAL` gate and ignores only unfixed findings, with its
+SARIF report retained as release evidence. Evidence collection and upload
+complete before stable aliases are promoted.
+
+The `candidate-${GITHUB_SHA}` reference is temporary for the publication flow
+but retained as an immutable audit alias after promotion. GHCR deletion is
+package-version or manifest-digest scoped; because stable aliases share the
+candidate digest, deleting that reference could delete the stable aliases. No
+candidate cleanup mutation is therefore attempted.
+
 Release workflow permissions are limited to:
 
 - `contents: read`;

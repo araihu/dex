@@ -77,11 +77,15 @@ abort 'checkout must use the job-scoped token explicitly' unless checkout.dig('w
 
 metadata = step(steps, 'release')
 metadata_run = metadata['run'].to_s
+abort 'release creation timestamp must derive from the checked-out commit' unless metadata_run.include?('git show -s --format=%ct "$GITHUB_SHA"')
+abort 'release creation timestamp must be UTC RFC3339' unless metadata_run.include?('datetime.timezone.utc') && metadata_run.include?('replace("+00:00", "Z")')
+abort 'release metadata must not use wall-clock date' if metadata_run.match?(/(^|[^[:alnum:]_])date([[:space:]]|$)/)
 [
   '^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$',
   'ghcr.io/araihu/dex',
   ':latest',
   'org.opencontainers.image.created=',
+  'source_date_epoch=',
   'org.opencontainers.image.revision=',
   'org.opencontainers.image.version=',
   'org.opencontainers.image.source=',
@@ -102,6 +106,9 @@ abort 'local OCI verification missing' unless verify_local['run'].to_s.include?(
 scan = step(steps, 'scan')
 abort 'vulnerability scan action missing' unless scan['uses'].start_with?('aquasecurity/trivy-action@')
 abort 'scan report must be retained as SARIF' unless scan.dig('with', 'format') == 'sarif' && scan.dig('with', 'output') == 'release-evidence/vulnerability-report.sarif'
+abort 'Trivy gate must fail on selected vulnerabilities' unless scan.dig('with', 'exit-code') == '1'
+abort 'Trivy severity policy must be HIGH,CRITICAL' unless scan.dig('with', 'severity') == 'HIGH,CRITICAL'
+abort 'Trivy ignore-unfixed policy must be explicit' unless scan.dig('with', 'ignore-unfixed') == true
 
 login = step(steps, 'login')
 abort 'GHCR login action missing' unless login['uses'].start_with?('docker/login-action@')
@@ -117,6 +124,7 @@ expected_publish = {
   'context' => '.',
   'platforms' => '${{ env.PLATFORMS }}',
   'labels' => '${{ steps.release.outputs.labels }}',
+  'build-args' => 'SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}',
   'provenance' => 'mode=max',
   'sbom' => true,
 }
@@ -159,24 +167,31 @@ abort 'release index evidence missing' unless evidence_run.include?('release-man
 abort 'release manifest checksum missing' unless evidence_run.include?('release-manifest.json.sha256')
 abort 'release SBOM evidence missing' unless evidence_run.include?('sbom.spdx.json')
 abort 'release provenance evidence missing' unless evidence_run.include?('provenance.slsa.json')
+abort 'release evidence must fail closed on missing files' unless evidence_run.include?('test -s "$evidence_file"')
 
 upload = step(steps, 'upload')
 upload_paths = upload.dig('with', 'path').to_s
 %w[release-evidence/ web/manifest.sha256 test/screenshots/araihu/ test-results/ playwright-report/].each do |path|
   abort "artifact upload misses #{path}" unless upload_paths.include?(path)
 end
+abort 'release evidence upload must fail on missing files' unless upload.dig('with', 'if-no-files-found') == 'error'
 
 ids = steps.map { |candidate| candidate['id'] }.compact
 %w[trust scan].each do |id|
   abort "#{id} must run before registry login" unless ids.index(id) < ids.index('login')
 end
-%w[attest sign verify_candidate promote verify_aliases evidence upload].each do |id|
+%w[attest sign verify_candidate evidence upload promote verify_aliases].each do |id|
   abort "#{id} must run after publication" unless ids.index(id) > ids.index('publish')
 end
 abort 'candidate must be resolved before attestation' unless ids.index('candidate') < ids.index('attest')
 abort 'local candidate must be verified before its digest is resolved' unless ids.index('verify_local') < ids.index('candidate')
 abort 'candidate must be verified before stable promotion' unless ids.index('verify_candidate') < ids.index('promote')
+abort 'release evidence must be collected before stable promotion' unless ids.index('evidence') < ids.index('promote')
+abort 'release evidence must be uploaded before stable promotion' unless ids.index('upload') < ids.index('promote')
 abort 'stable aliases must be verified after promotion' unless ids.index('verify_aliases') > ids.index('promote')
+
+readme = File.read(File.join(File.dirname(dockerfile_path), 'README.md'))
+abort 'candidate retention policy must be documented' unless readme.include?('candidate reference is retained') && readme.include?('stable aliases')
 
 serialized = workflow.to_s
 abort 'pull-request publication is forbidden' if serialized.match?(/pull_request|refs\/pull/)
@@ -229,6 +244,11 @@ assert_workflow_rejected image 'IMAGE: ghcr.io/araihu/dex' 'IMAGE: ghcr.io/araih
 assert_workflow_rejected edge ':latest' ':edge'
 assert_workflow_rejected provenance 'provenance: mode=max' 'provenance: false'
 assert_workflow_rejected sbom 'sbom: true' 'sbom: false'
+assert_workflow_rejected wall_clock_created 'git show -s --format=%ct "$GITHUB_SHA"' 'date -u +%s'
+assert_workflow_rejected trivy_exit "exit-code: '1'" "exit-code: '0'"
+assert_workflow_rejected trivy_severity 'severity: HIGH,CRITICAL' 'severity: LOW'
+assert_workflow_rejected trivy_ignore_unfixed 'ignore-unfixed: true' 'ignore-unfixed: false'
+assert_workflow_rejected reproducible_build_arg 'build-args: SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}' 'build-args: SOURCE_DATE_EPOCH=0'
 assert_workflow_rejected signing 'cosign sign --yes "$IMAGE@$DIGEST"' 'true # signature removed'
 assert_workflow_rejected verification 'scripts/verify-release.sh remote "$IMAGE@$DIGEST"' 'true # verification removed'
 
@@ -259,8 +279,20 @@ run_release_step() {
 		bash "$state/release-step.sh"
 }
 
-run_release_step tag v1.2.3 "$state/release-output"
+release_sha=$(git -C "$repo" rev-parse HEAD)
+run_release_step tag v1.2.3 "$state/release-output" "$release_sha"
 grep -Fqx 'version=v1.2.3' "$state/release-output" || die 'stable release version output mismatch'
+expected_source_date_epoch=$(git -C "$repo" show -s --format=%ct "$release_sha")
+grep -Fqx "source_date_epoch=$expected_source_date_epoch" "$state/release-output" || die 'release source timestamp output mismatch'
+expected_created=$(python3 - "$expected_source_date_epoch" <<'PY'
+import datetime
+import sys
+
+timestamp = datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc)
+print(timestamp.isoformat(timespec="seconds").replace("+00:00", "Z"))
+PY
+)
+grep -Fqx "created=$expected_created" "$state/release-output" || die 'release creation label is not source-derived'
 sed -n '/^tags<<ARAIHU_TAGS$/,/^ARAIHU_TAGS$/p' "$state/release-output" |
 	sed '1d;$d' > "$state/tags"
 cat > "$state/expected-tags" <<'EOF'

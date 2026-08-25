@@ -166,6 +166,10 @@ jobs:
           sh test/image-overlay_test.sh "$LOCAL_IMAGE"
           scripts/test-image.sh "$LOCAL_IMAGE"
 
+      - name: Prepare release evidence directory
+        id: prepare_evidence
+        run: mkdir -p release-evidence
+
       - name: Scan local release candidate
         id: scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -176,6 +180,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
 
       - name: Log in to GHCR after all local gates
         id: login

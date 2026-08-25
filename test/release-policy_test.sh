@@ -108,7 +108,11 @@ abort 'vulnerability scan action missing' unless scan['uses'].start_with?('aquas
 abort 'scan report must be retained as SARIF' unless scan.dig('with', 'format') == 'sarif' && scan.dig('with', 'output') == 'release-evidence/vulnerability-report.sarif'
 abort 'Trivy gate must fail on selected vulnerabilities' unless scan.dig('with', 'exit-code') == '1'
 abort 'Trivy severity policy must be HIGH,CRITICAL' unless scan.dig('with', 'severity') == 'HIGH,CRITICAL'
+abort 'Trivy SARIF output must be limited to selected severities' unless scan.dig('with', 'limit-severities-for-sarif') == true
 abort 'Trivy ignore-unfixed policy must be explicit' unless scan.dig('with', 'ignore-unfixed') == true
+
+prepare_evidence = step(steps, 'prepare_evidence')
+abort 'release evidence directory must be created before Trivy' unless prepare_evidence['run'].to_s.include?('mkdir -p release-evidence')
 
 login = step(steps, 'login')
 abort 'GHCR login action missing' unless login['uses'].start_with?('docker/login-action@')
@@ -180,6 +184,7 @@ ids = steps.map { |candidate| candidate['id'] }.compact
 %w[trust scan].each do |id|
   abort "#{id} must run before registry login" unless ids.index(id) < ids.index('login')
 end
+abort 'release evidence directory must be prepared before Trivy scan' unless ids.index('prepare_evidence') < ids.index('scan')
 %w[attest sign verify_candidate evidence upload promote verify_aliases].each do |id|
   abort "#{id} must run after publication" unless ids.index(id) > ids.index('publish')
 end
@@ -247,7 +252,9 @@ assert_workflow_rejected sbom 'sbom: true' 'sbom: false'
 assert_workflow_rejected wall_clock_created 'git show -s --format=%ct "$GITHUB_SHA"' 'date -u +%s'
 assert_workflow_rejected trivy_exit "exit-code: '1'" "exit-code: '0'"
 assert_workflow_rejected trivy_severity 'severity: HIGH,CRITICAL' 'severity: LOW'
+assert_workflow_rejected trivy_sarif_severity 'limit-severities-for-sarif: true' 'limit-severities-for-sarif: false'
 assert_workflow_rejected trivy_ignore_unfixed 'ignore-unfixed: true' 'ignore-unfixed: false'
+assert_workflow_rejected evidence_directory 'mkdir -p release-evidence' 'true # evidence directory omitted'
 assert_workflow_rejected reproducible_build_arg 'build-args: SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}' 'build-args: SOURCE_DATE_EPOCH=0'
 assert_workflow_rejected signing 'cosign sign --yes "$IMAGE@$DIGEST"' 'true # signature removed'
 assert_workflow_rejected verification 'scripts/verify-release.sh remote "$IMAGE@$DIGEST"' 'true # verification removed'

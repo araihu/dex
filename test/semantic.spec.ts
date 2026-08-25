@@ -1,9 +1,19 @@
-import { createHmac } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { assertCriticalAxe } from './fixtures/inherited-accessibility';
+import {
+  authorizationPath,
+  baseURL,
+  definitelyInvalidTOTP,
+  expect,
+  readTOTPSecret,
+  submitPassword,
+  submitTOTP,
+  test,
+  totp,
+  type CreateVirtualAuthenticator,
+} from './fixtures/real-dex';
 import { assertThemeMatrix } from './fixtures/theme-matrix';
 
 const templateNames = [
@@ -45,45 +55,13 @@ const expectedCSP = [
   "style-src 'self' 'unsafe-inline'",
 ].join('; ');
 
-function baseURL() {
-  const value = process.env.DEX_TEST_BASE_URL;
-  assert.ok(value, 'DEX_TEST_BASE_URL is required; run scripts/test-image.sh');
-  return value;
-}
-
-function authorizationPath(options: {
-  scopes?: string[];
-  redirectURI?: string;
-  prompt?: string;
-} = {}) {
-  const query = new URLSearchParams({
-    client_id: 'araihu-test',
-    redirect_uri: options.redirectURI ?? new URL('/client/callback', baseURL()).href,
-    response_type: 'code',
-    scope: (options.scopes ?? ['openid']).join(' '),
-  });
-  if (options.prompt) query.set('prompt', options.prompt);
-  return `/auth?${query}`;
-}
-
-function watchBrowser(page: Page) {
-  const issues: string[] = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error') issues.push(`console: ${message.text()}`);
-  });
-  page.on('pageerror', (error) => issues.push(`page: ${error.message}`));
-  return (allowed: RegExp[] = []) => {
-    expect(issues.filter((issue) => !allowed.some((pattern) => pattern.test(issue)))).toEqual([]);
-  };
-}
-
 async function expectAttributes(locator: Locator, attributes: Record<string, string>) {
   for (const [name, value] of Object.entries(attributes)) {
     await expect(locator).toHaveAttribute(name, value);
   }
 }
 
-async function openPassword(page: Page, path = authorizationPath()) {
+async function openPasswordWithAssertions(page: Page, path = authorizationPath()) {
   await page.goto(path);
   await expect(page.getByRole('heading', { name: 'Log in to AraiHu Dex' })).toBeVisible();
   await assertCriticalAxe(page);
@@ -120,62 +98,6 @@ async function assertPasswordForm(page: Page, username = '') {
   await assertCriticalAxe(page);
 }
 
-async function submitPassword(page: Page, email: string, password = 'password') {
-  await page.getByLabel('Email Address').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Login' }).click();
-}
-
-function readMFASecrets(userID: string) {
-  const database = process.env.DEX_TEST_DB;
-  assert.ok(database, 'DEX_TEST_DB is required; run scripts/test-image.sh');
-  const sql = `select cast(mfa_secrets as text) from user_identity where user_id = '${userID}' and connector_id = 'local';`;
-  const output = execFileSync('/usr/bin/sqlite3', ['-readonly', '-cmd', '.timeout 5000', database, sql], {
-    encoding: 'utf8',
-  }).trim();
-  assert.ok(output, `MFA identity not found for ${userID}`);
-  return JSON.parse(output) as Record<string, { secret: string }>;
-}
-
-function decodeBase32(value: string) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = 0;
-  let accumulator = 0;
-  const output: number[] = [];
-  for (const character of value.toUpperCase().replaceAll('=', '')) {
-    const digit = alphabet.indexOf(character);
-    assert.notEqual(digit, -1, `invalid base32 character: ${character}`);
-    accumulator = (accumulator << 5) | digit;
-    bits += 5;
-    if (bits >= 8) {
-      bits -= 8;
-      output.push((accumulator >>> bits) & 0xff);
-    }
-  }
-  return Buffer.from(output);
-}
-
-function totp(secretURL: string, offset = 0) {
-  const secret = new URL(secretURL).searchParams.get('secret');
-  assert.ok(secret, 'TOTP URL has no secret');
-  const counter = BigInt(Math.floor(Date.now() / 30_000) + offset);
-  const message = Buffer.alloc(8);
-  message.writeBigUInt64BE(counter);
-  const digest = createHmac('sha1', decodeBase32(secret)).update(message).digest();
-  const index = digest[digest.length - 1] & 0x0f;
-  const value = (digest.readUInt32BE(index) & 0x7fffffff) % 1_000_000;
-  return value.toString().padStart(6, '0');
-}
-
-function definitelyInvalidTOTP(secretURL: string) {
-  const valid = new Set([-1, 0, 1].map((offset) => totp(secretURL, offset)));
-  for (let candidate = 0; candidate < 10; candidate += 1) {
-    const code = candidate.toString().padStart(6, '0');
-    if (!valid.has(code)) return code;
-  }
-  throw new Error('could not choose invalid TOTP code');
-}
-
 async function assertTOTPPage(page: Page, enrollment: boolean, invalid = false) {
   locked('totp_verify.html', '<form method="post" action="{{ .PostURL }}">');
   locked('totp_verify.html', 'required id="totp" name="totp" type="text"');
@@ -208,27 +130,6 @@ async function assertTOTPPage(page: Page, enrollment: boolean, invalid = false) 
   await assertCriticalAxe(page);
 }
 
-async function submitTOTP(page: Page, code: string) {
-  await page.getByLabel('One-time code').fill(code);
-  await page.getByRole('button', { name: 'Verify' }).click();
-}
-
-async function addVirtualAuthenticator(page: Page, automaticPresenceSimulation = true) {
-  const session = await page.context().newCDPSession(page);
-  await session.send('WebAuthn.enable');
-  const { authenticatorId } = await session.send('WebAuthn.addVirtualAuthenticator', {
-    options: {
-      protocol: 'ctap2',
-      transport: 'usb',
-      hasResidentKey: true,
-      hasUserVerification: true,
-      isUserVerified: true,
-      automaticPresenceSimulation,
-    },
-  });
-  return { session, authenticatorId };
-}
-
 async function assertWebAuthnPage(page: Page, mode: 'register' | 'login') {
   locked('webauthn_verify.html', 'onclick="startWebAuthn()"');
   locked('webauthn_verify.html', 'fetch(basePath + "/mfa/webauthn/register/begin?"');
@@ -246,14 +147,17 @@ async function assertWebAuthnPage(page: Page, mode: 'register' | 'login') {
 
 function assertWebAuthnRequests(requests: Array<{ method: string; url: string }>, mode: 'register' | 'login') {
   for (const path of [`/mfa/webauthn/${mode}/begin`, `/mfa/webauthn/${mode}/finish`]) {
-    const request = requests.find(({ url }) => new URL(url).pathname === path);
-    expect(request, `missing ${path}`).toBeDefined();
-    expect(request!.method).toBe('POST');
-    const query = new URL(request!.url).searchParams;
-    expect(query.get('req')).toMatch(/\S+/);
-    expect(query.get('hmac')).toMatch(/\S+/);
-    expect(query.get('authenticator')).toBe('webauthn-1');
+    const matching = requests.filter(({ url }) => new URL(url).pathname === path);
+    expect(matching, `${path} request count`).toHaveLength(path.endsWith('/begin') ? 4 : 1);
+    for (const request of matching) {
+      expect(request.method).toBe('POST');
+      const query = new URL(request.url).searchParams;
+      expect(query.get('req')).toMatch(/\S+/);
+      expect(query.get('hmac')).toMatch(/\S+/);
+      expect(query.get('authenticator')).toBe('webauthn-1');
+    }
   }
+  expect(requests, `${mode} WebAuthn request total`).toHaveLength(5);
 }
 
 async function assertApproval(page: Page, scopes: string[]) {
@@ -285,23 +189,25 @@ async function assertApproval(page: Page, scopes: string[]) {
   await assertCriticalAxe(page);
 }
 
-async function enrollSimple(page: Page, email: string, userID: string) {
+async function enrollSimple(
+  page: Page,
+  email: string,
+  userID: string,
+  createVirtualAuthenticator: CreateVirtualAuthenticator,
+) {
   await submitPassword(page, email);
   await assertTOTPPage(page, true);
-  const secret = readMFASecrets(userID)['totp-1']?.secret;
-  assert.ok(secret, 'TOTP enrollment secret missing');
+  const secret = readTOTPSecret(userID);
   await submitTOTP(page, totp(secret, -1));
   await assertWebAuthnPage(page, 'register');
-  const authenticator = await addVirtualAuthenticator(page);
+  await createVirtualAuthenticator();
   await Promise.all([
     page.waitForURL(/\/approval\?/),
     page.getByRole('button', { name: 'Register Security Key' }).click(),
   ]);
-  return authenticator;
 }
 
-test('real login, password error, CSP, and overlay scripts preserve locked semantics', async ({ page }) => {
-  const assertNoBrowserIssues = watchBrowser(page);
+test('real login, password error, CSP, and overlay scripts preserve locked semantics', async ({ page, browserErrors }) => {
   const response = await page.goto(authorizationPath({ scopes: ['openid', 'profile', 'email'] }));
   expect(response?.headers()['content-security-policy']).toBe(expectedCSP);
   locked('login.html', '<a href="{{ $c.URL }}" class="dex-btn dex-btn-provider theme-btn-provider">');
@@ -322,17 +228,16 @@ test('real login, password error, CSP, and overlay scripts preserve locked seman
   await assertPasswordForm(page);
   await expect(page.getByLabel('Email Address')).toBeFocused();
   await assertThemeMatrix(page);
+  browserErrors.allowHTTPError({ pathname: '/auth/local/login', status: 401, count: 1 });
   await submitPassword(page, 'test@example.invalid', 'wrong-password');
   await expect(page.locator('#login-error')).toHaveText('Invalid Email Address and password.');
   await assertPasswordForm(page, 'test@example.invalid');
   await expect(page.getByLabel('Password')).toBeFocused();
-  assertNoBrowserIssues([/Failed to load resource.*401/]);
 });
 
 test('real storage choices and exceptions leave authentication semantics intact', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
-  const assertNoBrowserIssues = watchBrowser(page);
-  await openPassword(page);
+  await openPasswordWithAssertions(page);
   const formBefore = await page.locator('form').evaluate((form) => ({
     action: form.getAttribute('action'), method: form.getAttribute('method'), html: form.innerHTML,
   }));
@@ -361,7 +266,6 @@ test('real storage choices and exceptions leave authentication semantics intact'
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
   await expect(page.getByLabel('Tema')).toHaveValue('pastel');
   await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toHaveAttribute('aria-pressed', 'true');
-  assertNoBrowserIssues();
 });
 
 test('real Dex contains cookie and localStorage failures', async ({ page }) => {
@@ -380,8 +284,7 @@ test('real Dex contains cookie and localStorage failures', async ({ page }) => {
       set() { throw new DOMException('blocked', 'SecurityError'); },
     });
   });
-  const assertNoBrowserIssues = watchBrowser(page);
-  await openPassword(page);
+  await openPasswordWithAssertions(page);
   await page.getByRole('button', { name: 'Permitir', exact: true }).click();
   await page.getByLabel('Tema').selectOption('zombie');
   await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
@@ -389,19 +292,21 @@ test('real Dex contains cookie and localStorage failures', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'zombie');
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
   await expect(page.getByLabel('Preferências de aparência')).toBeVisible();
-  assertNoBrowserIssues();
 });
 
-test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', async ({ page }) => {
+test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', async ({
+  page,
+  browserErrors,
+  createVirtualAuthenticator,
+}) => {
   test.setTimeout(45_000);
-  const assertNoBrowserIssues = watchBrowser(page);
-  await openPassword(page, authorizationPath({ scopes: ['openid', 'profile', 'email'] }));
+  await openPasswordWithAssertions(page, authorizationPath({ scopes: ['openid', 'profile', 'email'] }));
   await submitPassword(page, 'test@example.invalid');
   await assertTOTPPage(page, true);
   await assertThemeMatrix(page);
 
-  const secret = readMFASecrets('00000000-0000-4000-8000-000000000001')['totp-1']?.secret;
-  assert.ok(secret, 'TOTP enrollment secret missing');
+  const secret = readTOTPSecret('00000000-0000-4000-8000-000000000001');
+  browserErrors.allowHTTPError({ pathname: '/mfa/totp', status: 401, count: 1 });
   await submitTOTP(page, definitelyInvalidTOTP(secret));
   await assertTOTPPage(page, true, true);
   await submitTOTP(page, totp(secret, -1));
@@ -412,9 +317,10 @@ test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', 
   page.on('request', (request) => {
     if (request.url().includes('/mfa/webauthn/')) registrationRequests.push({ method: request.method(), url: request.url() });
   });
-  const { session, authenticatorId } = await addVirtualAuthenticator(page, true);
+  const authenticator = await createVirtualAuthenticator(true);
 
   let failBegin = true;
+  browserErrors.allowHTTPError({ pathname: '/mfa/webauthn/register/begin', status: 503, count: 1 });
   await page.route('**/mfa/webauthn/register/begin?**', async (route) => {
     if (!failBegin) {
       await route.continue();
@@ -428,11 +334,11 @@ test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', 
   await expect(page.getByRole('button', { name: 'Register Security Key' })).toBeVisible();
   await page.unroute('**/mfa/webauthn/register/begin?**');
 
-  await session.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: false });
+  await authenticator.setPresence(false);
   await page.getByRole('button', { name: 'Register Security Key' }).click();
   await expect(page.locator('#webauthn-error')).toHaveText('Request was cancelled or timed out. Please try again.', { timeout: 5_000 });
   await expect(page.getByRole('button', { name: 'Register Security Key' })).toBeVisible();
-  await session.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: true });
+  await authenticator.setPresence(true);
 
   const registerURL = page.url();
   const wrongOrigin = new URL(registerURL);
@@ -452,7 +358,7 @@ test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', 
   await assertThemeMatrix(page);
 
   await page.context().clearCookies();
-  await openPassword(page, authorizationPath({ scopes: ['openid'], prompt: 'consent' }));
+  await openPasswordWithAssertions(page, authorizationPath({ scopes: ['openid'], prompt: 'consent' }));
   await submitPassword(page, 'test@example.invalid');
   await assertTOTPPage(page, false);
 
@@ -460,13 +366,46 @@ test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', 
   page.on('request', (request) => {
     if (request.url().includes('/mfa/webauthn/login/')) loginRequests.push({ method: request.method(), url: request.url() });
   });
+
+  let failLoginBegin = true;
+  browserErrors.allowHTTPError({ pathname: '/mfa/webauthn/login/begin', status: 503, count: 1 });
+  await page.route('**/mfa/webauthn/login/begin?**', async (route) => {
+    if (!failLoginBegin) {
+      await route.continue();
+      return;
+    }
+    failLoginBegin = false;
+    await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"test outage"}' });
+  });
+  await submitTOTP(page, totp(secret, 0));
+  await assertWebAuthnPage(page, 'login');
+  await expect(page.locator('#webauthn-error')).toHaveText('Authentication failed (status 503)');
+  await expect(page.getByRole('button', { name: 'Use Security Key' })).toBeVisible();
+  await page.unroute('**/mfa/webauthn/login/begin?**');
+
+  await authenticator.setPresence(false);
+  await page.getByRole('button', { name: 'Use Security Key' }).click();
+  await expect(page.locator('#webauthn-error')).toHaveText(
+    'Request was cancelled or timed out. Please try again.',
+    { timeout: 5_000 },
+  );
+  await expect(page.getByRole('button', { name: 'Use Security Key' })).toBeVisible();
+  await authenticator.setPresence(true);
+
+  const loginURL = page.url();
+  const wrongLoginOrigin = new URL(loginURL);
+  wrongLoginOrigin.hostname = '127.0.0.1';
+  await page.goto(wrongLoginOrigin.href);
+  await expect(page.locator('#webauthn-error')).toHaveText('Security key operation not allowed on this domain.');
+  await expect(page.getByRole('button', { name: 'Use Security Key' })).toBeVisible();
+
   let releaseLogin!: () => void;
   const loginGate = new Promise<void>((resolve) => { releaseLogin = resolve; });
   await page.route('**/mfa/webauthn/login/begin?**', async (route) => {
     await loginGate;
     await route.continue();
   });
-  await submitTOTP(page, totp(secret, 0));
+  await page.goto(loginURL);
   await assertWebAuthnPage(page, 'login');
   await expect(page.locator('#webauthn-working')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Use Security Key' })).toBeHidden();
@@ -476,16 +415,19 @@ test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', 
   await page.unroute('**/mfa/webauthn/login/begin?**');
   assertWebAuthnRequests(loginRequests, 'login');
   await assertApproval(page, []);
-  assertNoBrowserIssues([/Failed to load resource.*(?:401|503)/]);
 });
 
-test('device entry, invalid entry, success, home, and logout use real routes', async ({ page }) => {
+test('device entry, invalid entry, success, home, and logout use real routes', async ({
+  page,
+  browserErrors,
+  createVirtualAuthenticator,
+}) => {
   test.setTimeout(30_000);
-  const assertNoBrowserIssues = watchBrowser(page);
   locked('device.html', '<form method="post" action="{{ .PostURL }}">');
   locked('device.html', 'required id="user_code" name="user_code" type="text"');
   locked('device_success.html', 'Login Successful for {{ .ClientName }}');
 
+  browserErrors.allowHTTPError({ pathname: '/device', status: 400, count: 1 });
   await page.goto('/device?user_code=BAD-CODE&invalid=true');
   await expect(page.getByRole('heading', { name: 'Enter User Code' })).toBeVisible();
   await expectAttributes(page.locator('#user_code'), {
@@ -516,7 +458,12 @@ test('device entry, invalid entry, success, home, and logout use real routes', a
   await page.getByRole('button', { name: 'Submit' }).click();
   await expect(page.getByRole('heading', { name: 'Log in to AraiHu Dex' })).toBeVisible();
   await page.getByRole('link', { name: 'Log in with Email' }).click();
-  await enrollSimple(page, 'device@example.invalid', '00000000-0000-4000-8000-000000000002');
+  await enrollSimple(
+    page,
+    'device@example.invalid',
+    '00000000-0000-4000-8000-000000000002',
+    createVirtualAuthenticator,
+  );
   await assertApproval(page, ['View basic profile information']);
   await page.getByRole('button', { name: 'Grant Access' }).click();
   await expect(page.getByRole('heading', { name: 'Login Successful for AraiHu Test Client' })).toBeVisible();
@@ -540,16 +487,23 @@ test('device entry, invalid entry, success, home, and logout use real routes', a
   await expectAttributes(page.locator('form'), { action: '/logout', method: 'post' });
   await page.getByRole('button', { name: 'Log Out' }).click();
   await expect(page.getByRole('heading', { name: 'Logged Out' })).toBeVisible();
-  assertNoBrowserIssues([/Failed to load resource.*400/]);
 });
 
-test('OOB and generic pages render through actual upstream handlers', async ({ page }) => {
+test('OOB and generic pages render through actual upstream handlers', async ({
+  page,
+  browserErrors,
+  createVirtualAuthenticator,
+}) => {
   test.setTimeout(30_000);
-  const assertNoBrowserIssues = watchBrowser(page);
-  await openPassword(page, authorizationPath({
+  await openPasswordWithAssertions(page, authorizationPath({
     redirectURI: 'urn:ietf:wg:oauth:2.0:oob', scopes: ['openid'], prompt: 'consent',
   }));
-  await enrollSimple(page, 'oob@example.invalid', '00000000-0000-4000-8000-000000000003');
+  await enrollSimple(
+    page,
+    'oob@example.invalid',
+    '00000000-0000-4000-8000-000000000003',
+    createVirtualAuthenticator,
+  );
   await assertApproval(page, []);
   await page.getByRole('button', { name: 'Grant Access' }).click();
   locked('oob.html', '<input type="text" class="theme-form-input" value="{{ .Code }}" />');
@@ -561,6 +515,7 @@ test('OOB and generic pages render through actual upstream handlers', async ({ p
   await assertCriticalAxe(page, 'oob');
   await expect(code).toHaveAccessibleName('');
 
+  browserErrors.allowHTTPError({ pathname: '/auth', status: 400, count: 1 });
   const errorResponse = await page.goto('/auth');
   expect(errorResponse?.status()).toBe(400);
   locked('error.html', '<h2 class="theme-heading">{{ .ErrType }}</h2>');
@@ -577,5 +532,4 @@ test('OOB and generic pages render through actual upstream handlers', async ({ p
   );
   await page.goto('/logout');
   await expect(page.getByRole('heading', { name: 'Session Not Found' })).toBeVisible();
-  assertNoBrowserIssues([/Failed to load resource.*400/]);
 });

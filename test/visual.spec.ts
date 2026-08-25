@@ -1,8 +1,17 @@
-import { createHmac } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import assert from 'node:assert/strict';
-import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
-import { themes } from './fixtures/theme-matrix';
+import type { Locator, Page, TestInfo } from '@playwright/test';
+import {
+  authorizationPath,
+  definitelyInvalidTOTP,
+  expect,
+  openPassword,
+  readTOTPSecret,
+  submitPassword,
+  submitTOTP,
+  test,
+  totp,
+  type CreateVirtualAuthenticator,
+} from './fixtures/real-dex';
+import { assertThemeContrastMatrix, themes } from './fixtures/theme-matrix';
 
 const visualUsers = {
   primary: {
@@ -19,115 +28,21 @@ const visualUsers = {
   },
 } as const;
 
-function baseURL() {
-  const value = process.env.DEX_TEST_BASE_URL;
-  assert.ok(value, 'DEX_TEST_BASE_URL is required; run scripts/test-image.sh');
-  return value;
-}
-
-function authorizationPath(options: { scopes?: string[]; redirectURI?: string; prompt?: string } = {}) {
-  const query = new URLSearchParams({
-    client_id: 'araihu-test',
-    redirect_uri: options.redirectURI ?? new URL('/client/callback', baseURL()).href,
-    response_type: 'code',
-    scope: (options.scopes ?? ['openid']).join(' '),
-  });
-  if (options.prompt) query.set('prompt', options.prompt);
-  return `/auth?${query}`;
-}
-
-async function openPassword(page: Page, path = authorizationPath()) {
-  await page.goto(path);
-  await page.getByRole('link', { name: 'Log in with Email' }).click();
-  await expect(page.getByRole('heading', { name: 'Log in to Your Account' })).toBeVisible();
-}
-
-async function submitPassword(page: Page, email: string, password = 'password') {
-  await page.getByLabel('Email Address').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Login' }).click();
-}
-
-function readSecret(userID: string) {
-  const database = process.env.DEX_TEST_DB;
-  assert.ok(database, 'DEX_TEST_DB is required; run scripts/test-image.sh');
-  const sql = `select cast(mfa_secrets as text) from user_identity where user_id = '${userID}' and connector_id = 'local';`;
-  const output = execFileSync('/usr/bin/sqlite3', ['-readonly', '-cmd', '.timeout 5000', database, sql], {
-    encoding: 'utf8',
-  }).trim();
-  const secrets = JSON.parse(output) as Record<string, { secret: string }>;
-  assert.ok(secrets['totp-1']?.secret, `TOTP secret missing for ${userID}`);
-  return secrets['totp-1'].secret;
-}
-
-function decodeBase32(value: string) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = 0;
-  let accumulator = 0;
-  const output: number[] = [];
-  for (const character of value.toUpperCase().replaceAll('=', '')) {
-    const digit = alphabet.indexOf(character);
-    assert.notEqual(digit, -1);
-    accumulator = (accumulator << 5) | digit;
-    bits += 5;
-    if (bits >= 8) {
-      bits -= 8;
-      output.push((accumulator >>> bits) & 0xff);
-    }
-  }
-  return Buffer.from(output);
-}
-
-function totp(secretURL: string, offset = 0) {
-  const secret = new URL(secretURL).searchParams.get('secret');
-  assert.ok(secret);
-  const message = Buffer.alloc(8);
-  message.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000) + offset));
-  const digest = createHmac('sha1', decodeBase32(secret)).update(message).digest();
-  const index = digest[digest.length - 1] & 0x0f;
-  return ((digest.readUInt32BE(index) & 0x7fffffff) % 1_000_000).toString().padStart(6, '0');
-}
-
-function invalidTOTP(secretURL: string) {
-  const valid = new Set([-1, 0, 1].map((offset) => totp(secretURL, offset)));
-  for (let value = 0; value < 10; value += 1) {
-    const candidate = value.toString().padStart(6, '0');
-    if (!valid.has(candidate)) return candidate;
-  }
-  throw new Error('could not choose an invalid TOTP code');
-}
-
-async function submitTOTP(page: Page, code: string) {
-  await page.getByLabel('One-time code').fill(code);
-  await page.getByRole('button', { name: 'Verify' }).click();
-}
-
-async function addVirtualAuthenticator(page: Page, automaticPresenceSimulation = true) {
-  const session = await page.context().newCDPSession(page);
-  await session.send('WebAuthn.enable');
-  const { authenticatorId } = await session.send('WebAuthn.addVirtualAuthenticator', {
-    options: {
-      protocol: 'ctap2',
-      transport: 'usb',
-      hasResidentKey: true,
-      hasUserVerification: true,
-      isUserVerified: true,
-      automaticPresenceSimulation,
-    },
-  });
-  return { session, authenticatorId };
-}
-
-async function enroll(page: Page, email: string, userID: string) {
+async function enroll(
+  page: Page,
+  email: string,
+  userID: string,
+  createVirtualAuthenticator: CreateVirtualAuthenticator,
+) {
   await submitPassword(page, email);
-  const secret = readSecret(userID);
+  const secret = readTOTPSecret(userID);
   await submitTOTP(page, totp(secret, -1));
-  const authenticator = await addVirtualAuthenticator(page);
+  await createVirtualAuthenticator();
   await Promise.all([
     page.waitForURL(/\/approval\?/),
     page.getByRole('button', { name: 'Register Security Key' }).click(),
   ]);
-  return { secret, ...authenticator };
+  return secret;
 }
 
 async function setAraiHuMode(page: Page, dark: boolean) {
@@ -144,8 +59,9 @@ async function setAraiHuMode(page: Page, dark: boolean) {
 async function captureAraiHu(
   page: Page,
   state: string,
-  options: { mask?: Locator[]; dynamicText?: boolean } = {},
+  options: { mask?: Locator[] } = {},
 ) {
+  await assertThemeContrastMatrix(page, state);
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     for (const mode of ['light', 'dark'] as const) {
@@ -154,7 +70,6 @@ async function captureAraiHu(
       await expect(page).toHaveScreenshot(`${state}-${width}-${mode}.png`, {
         fullPage: true,
         mask: options.mask,
-        maxDiffPixelRatio: options.dynamicText ? 0.005 : 0,
       });
     }
   }
@@ -177,20 +92,23 @@ async function captureOtherThemes(page: Page, testInfo: TestInfo) {
   }
 }
 
-test('AraiHu public and error surfaces have committed responsive baselines', async ({ page }) => {
-  test.setTimeout(90_000);
+test('AraiHu public and error surfaces have committed responsive baselines', async ({ page, browserErrors }) => {
+  test.setTimeout(180_000);
   await page.goto(authorizationPath());
   await captureAraiHu(page, 'login');
 
   await page.getByRole('link', { name: 'Log in with Email' }).click();
   await captureAraiHu(page, 'password');
+  browserErrors.allowHTTPError({ pathname: '/auth/local/login', status: 401, count: 1 });
   await submitPassword(page, visualUsers.primary.email, 'wrong-password');
   await expect(page.locator('#login-error')).toBeVisible();
   await captureAraiHu(page, 'password-invalid');
 
+  browserErrors.allowHTTPError({ pathname: '/device', status: 400, count: 1 });
   await page.goto('/device?user_code=BAD-CODE&invalid=true');
   await captureAraiHu(page, 'device-invalid');
 
+  browserErrors.allowHTTPError({ pathname: '/auth', status: 400, count: 1 });
   await page.goto('/auth');
   await captureAraiHu(page, 'error-bad-request');
 
@@ -207,9 +125,14 @@ test('other allowlisted themes retain login evidence as test artifacts', async (
   await captureOtherThemes(page, testInfo);
 });
 
-test('AraiHu TOTP, WebAuthn, and approval states have committed baselines', async ({ page }) => {
-  test.setTimeout(120_000);
+test('AraiHu TOTP, WebAuthn, and approval states have committed baselines', async ({
+  page,
+  browserErrors,
+  createVirtualAuthenticator,
+}) => {
+  test.setTimeout(240_000);
   await openPassword(page, authorizationPath({ scopes: ['openid', 'profile', 'email'] }));
+  await expect(page.getByRole('heading', { name: 'Log in to Your Account' })).toBeVisible();
   await submitPassword(page, visualUsers.primary.email);
   const qr = page.getByRole('img', { name: 'QR code' });
   await expect(qr).toHaveAttribute('src', /^data:image\/png;base64,/);
@@ -219,13 +142,15 @@ test('AraiHu TOTP, WebAuthn, and approval states have committed baselines', asyn
   expect(await qr.boundingBox()).toMatchObject({ width: 200, height: 200 });
   await captureAraiHu(page, 'totp-enrollment', { mask: [qr] });
 
-  const secret = readSecret(visualUsers.primary.id);
-  await submitTOTP(page, invalidTOTP(secret));
+  const secret = readTOTPSecret(visualUsers.primary.id);
+  browserErrors.allowHTTPError({ pathname: '/mfa/totp', status: 401, count: 1 });
+  await submitTOTP(page, definitelyInvalidTOTP(secret));
   await captureAraiHu(page, 'totp-enrollment-invalid', { mask: [page.getByRole('img', { name: 'QR code' })] });
   await submitTOTP(page, totp(secret, -1));
   await captureAraiHu(page, 'webauthn-register');
 
   let failBegin = true;
+  browserErrors.allowHTTPError({ pathname: '/mfa/webauthn/register/begin', status: 503, count: 1 });
   await page.route('**/mfa/webauthn/register/begin?**', async (route) => {
     if (!failBegin) return route.continue();
     failBegin = false;
@@ -236,11 +161,11 @@ test('AraiHu TOTP, WebAuthn, and approval states have committed baselines', asyn
   await captureAraiHu(page, 'webauthn-register-server-error');
   await page.unroute('**/mfa/webauthn/register/begin?**');
 
-  const { session, authenticatorId } = await addVirtualAuthenticator(page, false);
+  const authenticator = await createVirtualAuthenticator(false);
   await page.getByRole('button', { name: 'Register Security Key' }).click();
   await expect(page.locator('#webauthn-error')).toContainText('cancelled or timed out', { timeout: 5_000 });
   await captureAraiHu(page, 'webauthn-register-timeout');
-  await session.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: true });
+  await authenticator.setPresence(true);
 
   const registerURL = page.url();
   const wrongOrigin = new URL(registerURL);
@@ -278,37 +203,107 @@ test('AraiHu TOTP, WebAuthn, and approval states have committed baselines', asyn
   await captureAraiHu(page, 'approval-no-scopes');
 });
 
-test('AraiHu device, signed-in home, and logout states have committed baselines', async ({ page }) => {
-  test.setTimeout(120_000);
+test('AraiHu device, signed-in home, and logout states have committed baselines', async ({
+  page,
+  createVirtualAuthenticator,
+}) => {
+  test.setTimeout(180_000);
   const response = await page.request.post('/device/code', {
     form: { client_id: 'araihu-test', client_secret: 'local-test-client-secret', scope: 'openid profile' },
   });
-  const device = await response.json() as { verification_uri_complete: string };
+  expect(response.ok()).toBe(true);
+  const device = await response.json() as { user_code: string; verification_uri_complete: string };
+  expect(device.user_code).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
   await page.goto(device.verification_uri_complete);
-  await captureAraiHu(page, 'device-entry', { dynamicText: true });
+  const deviceCode = page.locator('#user_code');
+  await expect(deviceCode).toHaveValue(device.user_code);
+  await deviceCode.evaluate((input: HTMLInputElement) => { input.value = 'ABCD-EFGH'; });
+  await captureAraiHu(page, 'device-entry');
+  await deviceCode.fill(device.user_code);
   await page.getByRole('button', { name: 'Submit' }).click();
   await page.getByRole('link', { name: 'Log in with Email' }).click();
-  await enroll(page, visualUsers.device.email, visualUsers.device.id);
+  await enroll(page, visualUsers.device.email, visualUsers.device.id, createVirtualAuthenticator);
   await page.getByRole('button', { name: 'Grant Access' }).click();
   await expect(page.getByRole('heading', { name: 'Login Successful for AraiHu Test Client' })).toBeVisible();
   await captureAraiHu(page, 'device-success');
 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'visual-device-user' })).toBeVisible();
-  await captureAraiHu(page, 'home-signed-in', { dynamicText: true });
+  const times = page.locator('time[datetime]');
+  await expect(times).toHaveCount(2);
+  for (const time of await times.all()) {
+    const datetime = await time.getAttribute('datetime');
+    const visibleText = await time.textContent();
+    expect(datetime).toMatch(/\S+/);
+    expect(Number.isNaN(Date.parse(datetime!))).toBe(false);
+    expect(visibleText).toMatch(/\S+/);
+  }
+  await times.nth(0).evaluate((element) => { element.textContent = 'Jan 1, 2000, 12:00 AM'; });
+  await times.nth(1).evaluate((element) => { element.textContent = 'Jan 1, 2000, 12:30 AM'; });
+  const signedInFrom = page.locator('.dex-fact').filter({ has: page.getByText('Signed in from', { exact: true }) }).locator('dd');
+  const browser = page.locator('.dex-fact').filter({ has: page.getByText('Browser', { exact: true }) }).locator('dd');
+  await expect(signedInFrom).toHaveText(/\S+/);
+  await expect(browser).toHaveText(/\S+/);
+  await signedInFrom.evaluate((element) => { element.textContent = '192.0.2.1'; });
+  await browser.evaluate((element) => { element.textContent = 'Deterministic test browser'; });
+  await captureAraiHu(page, 'home-signed-in');
   await page.goto('/logout');
   await captureAraiHu(page, 'logout-confirmation');
   await page.getByRole('button', { name: 'Log Out' }).click();
   await captureAraiHu(page, 'logout-complete');
 });
 
-test('AraiHu OOB completion has committed responsive baselines', async ({ page }) => {
-  test.setTimeout(120_000);
+test('AraiHu OOB completion has committed responsive baselines', async ({
+  page,
+  createVirtualAuthenticator,
+}) => {
+  test.setTimeout(180_000);
   await openPassword(page, authorizationPath({
     redirectURI: 'urn:ietf:wg:oauth:2.0:oob', scopes: ['openid'], prompt: 'consent',
   }));
-  await enroll(page, visualUsers.oob.email, visualUsers.oob.id);
+  await expect(page.getByRole('heading', { name: 'Log in to Your Account' })).toBeVisible();
+  await enroll(page, visualUsers.oob.email, visualUsers.oob.id, createVirtualAuthenticator);
   await page.getByRole('button', { name: 'Grant Access' }).click();
   await expect(page.getByRole('heading', { name: 'Login Successful' })).toBeVisible();
-  await captureAraiHu(page, 'oob-complete', { dynamicText: true });
+  const oobCode = page.locator('input.theme-form-input');
+  await expect(oobCode).toHaveValue(/\S+/);
+  await oobCode.evaluate((input: HTMLInputElement) => { input.value = 'TEST-OOB-CODE'; });
+  await captureAraiHu(page, 'oob-complete');
+});
+
+test('exact visual gate rejects an unrelated one-pixel regression', async ({ page }, testInfo) => {
+  test.skip(
+    !['missing', 'none'].includes(testInfo.config.updateSnapshots),
+    'mutation assertions must never rewrite their reference',
+  );
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto(authorizationPath());
+  await setAraiHuMode(page, false);
+  await page.evaluate(() => document.fonts.ready);
+  await expect(page).toHaveScreenshot('login-390-light.png', { fullPage: true });
+
+  await page.locator('body').evaluate((body) => {
+    const mutation = document.createElement('span');
+    mutation.setAttribute('aria-hidden', 'true');
+    Object.assign(mutation.style, {
+      background: 'rgb(255, 0, 255)',
+      height: '1px',
+      left: '0',
+      pointerEvents: 'none',
+      position: 'fixed',
+      top: '0',
+      width: '1px',
+      zIndex: '2147483647',
+    });
+    body.append(mutation);
+  });
+
+  let failure: unknown;
+  try {
+    await expect(page).toHaveScreenshot('login-390-light.png', { fullPage: true, timeout: 1_000 });
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toMatch(/pixels?.*different/);
 });

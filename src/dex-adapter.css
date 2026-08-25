@@ -119,6 +119,20 @@ html.dark {
   background: var(--color-surface-dark-alt);
 }
 
+.dex-home {
+  --dex-home-fg: var(--color-on-surface-strong);
+  --dex-home-muted: var(--color-on-surface);
+  --dex-home-border: var(--color-outline);
+  --dex-home-accent: var(--color-on-surface-strong);
+}
+
+.dark .dex-home {
+  --dex-home-fg: var(--color-on-surface-dark-strong);
+  --dex-home-muted: var(--color-on-surface-dark);
+  --dex-home-border: var(--color-outline-dark);
+  --dex-home-accent: var(--color-on-surface-dark-strong);
+}
+
 .theme-heading {
   margin-top: 0;
   color: var(--color-on-surface-strong);
@@ -164,19 +178,19 @@ html.dark {
   justify-content: center;
   gap: .5rem;
   padding: .625rem 1rem;
-  border: 1px solid var(--color-primary);
+  border: 1px solid var(--color-on-surface-strong);
   border-radius: var(--radius-radius);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
+  background: var(--color-on-surface-strong);
+  color: var(--color-surface);
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
 }
 
 .dark .dex-btn {
-  border-color: var(--color-primary-dark);
-  background: var(--color-primary-dark);
-  color: var(--color-on-primary-dark);
+  border-color: var(--color-on-surface-dark-strong);
+  background: var(--color-on-surface-dark-strong);
+  color: var(--color-surface-dark);
 }
 
 .theme-btn-provider {
@@ -201,14 +215,14 @@ html.dark {
 
 .theme-btn--success {
   border-color: var(--color-success-action);
-  background: var(--color-success-action);
-  color: var(--color-on-success-action);
+  background: var(--color-on-surface-strong);
+  color: var(--color-surface);
 }
 
 .dark .theme-btn--success {
   border-color: var(--color-success-action-dark);
-  background: var(--color-success-action-dark);
-  color: var(--color-on-success-action-dark);
+  background: var(--color-on-surface-dark-strong);
+  color: var(--color-surface-dark);
 }
 
 .dex-error-box {
@@ -216,19 +230,29 @@ html.dark {
   padding: .75rem;
   border: 1px solid var(--color-danger);
   border-radius: var(--radius-radius);
+  background: var(--color-surface);
   color: var(--color-danger-text);
 }
 
 .dark .dex-error-box {
+  background: var(--color-surface-dark);
   color: var(--color-danger-text-dark);
 }
 
 .dex-subtle-text {
-  color: var(--color-on-surface-muted);
+  color: var(--color-on-surface-strong);
 }
 
 .dark .dex-subtle-text {
-  color: var(--color-on-surface-dark-muted);
+  color: var(--color-on-surface-dark-strong);
+}
+
+.dex-list {
+  color: var(--color-on-surface-strong);
+}
+
+.dark .dex-list {
+  color: var(--color-on-surface-dark-strong);
 }
 
 .dex-separator {

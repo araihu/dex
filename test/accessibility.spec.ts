@@ -1,27 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
 import { assertCriticalAxe } from './fixtures/inherited-accessibility';
+import { authorizationPath, expect, test } from './fixtures/real-dex';
 import { themes } from './fixtures/theme-matrix';
-
-function authorizationPath() {
-  const origin = process.env.DEX_TEST_BASE_URL!;
-  const query = new URLSearchParams({
-    client_id: 'araihu-test',
-    redirect_uri: new URL('/client/callback', origin).href,
-    response_type: 'code',
-    scope: 'openid',
-  });
-  return `/auth?${query}`;
-}
-
-function watchBrowser(page: import('@playwright/test').Page) {
-  const issues: string[] = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error') issues.push(`console: ${message.text()}`);
-  });
-  page.on('pageerror', (error) => issues.push(`page: ${error.message}`));
-  return () => expect(issues).toEqual([]);
-}
 
 test('real Dex login has no critical accessibility violations', async ({ page }) => {
   await page.goto(authorizationPath());
@@ -40,7 +20,8 @@ test('dismissing storage notice returns focus to the upstream login field', asyn
   await expect(page.locator('#login')).toBeFocused();
 });
 
-test('real device entry locks its inherited critical label violation to upstream bytes', async ({ page }) => {
+test('real device entry locks its inherited critical label violation to upstream bytes', async ({ page, browserErrors }) => {
+  browserErrors.allowHTTPError({ pathname: '/device', status: 400, count: 1 });
   await page.goto('/device?user_code=BAD-CODE&invalid=true');
 
   await assertCriticalAxe(page, 'device');
@@ -48,7 +29,6 @@ test('real device entry locks its inherited critical label violation to upstream
 });
 
 test('overlay controls and upstream password fields expose names, roles, and states', async ({ page }) => {
-  const assertNoBrowserIssues = watchBrowser(page);
   await page.goto(authorizationPath());
   await page.getByRole('link', { name: 'Log in with Email' }).click();
 
@@ -74,7 +54,6 @@ test('overlay controls and upstream password fields expose names, roles, and sta
   await mode.click();
   await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
   await expect(mode).toHaveAttribute('aria-label', 'Ativar modo escuro');
-  assertNoBrowserIssues();
 });
 
 test('keyboard focus is visible on overlay and authentication controls', async ({ page }) => {

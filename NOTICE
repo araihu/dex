@@ -21,3 +21,8 @@ Heroicons used by this overlay are licensed under the MIT License.
 
 The complete source and third-party notices shipped in a release identify the
 exact released materials included in that artifact.
+
+Release images declare the SPDX license expression `Apache-2.0 AND MIT`. Their
+SPDX JSON SBOM, provenance, attestations, and signatures identify the exact
+artifact and included materials; they do not replace this notice or change any
+component's license terms.

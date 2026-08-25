@@ -10,6 +10,9 @@ old_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 new_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 old_digest=sha256:1111111111111111111111111111111111111111111111111111111111111111
 new_digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
+approved_prerelease_tag=v2.46.0-20260806171424-ab64ed77
+approved_prerelease_commit=ab64ed778070e983cbb10cfc07ea4bb397d14312
+approved_prerelease_digest=sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
 templates='approval.html device.html device_success.html error.html footer.html header.html home.html login.html logout.html oob.html password.html totp_verify.html webauthn_verify.html'
 
 fail() {
@@ -151,20 +154,23 @@ prepare_fake_commands() {
 prepare_repository() {
 	root=$1
 	current_header=$2
+	locked_commit=${3:-$old_commit}
+	locked_digest=${4:-$old_digest}
+	locked_image=${5:-ghcr.io/dexidp/dex:master@$locked_digest}
 	old_archive_hash=$(digest "$(dirname "$root")/old.tar.gz")
 	mkdir -p "$root/scripts" "$root/src" "$root/test" "$root/web" "$root/node_modules" "$root/.cache/sources"
 	cat >"$root/versions.env" <<EOF
-DEX_COMMIT=$old_commit
-DEX_IMAGE=ghcr.io/dexidp/dex:master@$old_digest
-DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$old_commit.tar.gz
+DEX_COMMIT=$locked_commit
+DEX_IMAGE=$locked_image
+DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$locked_commit.tar.gz
 DEX_SOURCE_FILENAME=dex.tar.gz
 DEX_SOURCE_SHA256=$old_archive_hash
 EOF
-	printf 'FROM ghcr.io/dexidp/dex:master@%s\n' "$old_digest" >"$root/Dockerfile"
+	printf 'FROM %s\n' "$locked_image" >"$root/Dockerfile"
 	printf '%s\n' "$current_header" >"$root/src/header.html"
 	printf '%s\n' 'footer base' 'footer overlay' >"$root/src/footer.html"
-	printf "upstream='%s'\n" "ghcr.io/dexidp/dex:master@$old_digest" >"$root/test/image-overlay_test.sh"
-	printf 'dex_commit=%s\n' "$old_commit" >"$root/test/fetch-sources_test.sh"
+	printf "upstream='%s'\n" "$locked_image" >"$root/test/image-overlay_test.sh"
+	printf 'dex_commit=%s\n' "$locked_commit" >"$root/test/fetch-sources_test.sh"
 	printf '%s\n' '#!/bin/sh' 'set -eu' 'printf "fetch-sources\n" >>"$UPDATE_TEST_LOG"' >"$root/scripts/fetch-sources.sh"
 	printf '%s\n' '#!/bin/sh' 'set -eu' 'printf "entrypoint-test\n" >>"$UPDATE_TEST_LOG"' >"$root/test/entrypoint_test.sh"
 	printf '%s\n' '#!/bin/sh' 'set -eu' 'printf "image-overlay-test\n" >>"$UPDATE_TEST_LOG"' >"$root/test/image-overlay_test.sh.gate"
@@ -413,6 +419,29 @@ grep -F 'cosign verify-attestation' "$case_dir/commands.log" >/dev/null ||
 if grep -E '(docker buildx build|curl |npm |fetch-sources|image-test|gh )' "$case_dir/commands.log" >/dev/null; then
 	fail 'lock-only verification resolved or prepared an update'
 fi
+
+case_dir=$(make_case prerelease-lock-verification)
+printf '%s\n' "$approved_prerelease_commit" >"$case_dir/new-commit"
+printf '%s\n' "$approved_prerelease_digest" >"$case_dir/new-digest"
+make_archive "$approved_prerelease_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+cp "$case_dir/old.tar.gz" "$case_dir/new.tar.gz"
+approved_prerelease_ref=ghcr.io/dexidp/dex:$approved_prerelease_tag@$approved_prerelease_digest
+prepare_repository "$case_dir/repo" 'header base
+header overlay' "$approved_prerelease_commit" "$approved_prerelease_digest" "$approved_prerelease_ref"
+
+: >"$case_dir/commands.log"
+if ! run_lock_verification "$case_dir"; then
+	sed -n '1,120p' "$case_dir/stderr" >&2
+	fail 'approved prerelease lock-only verification failed'
+fi
+grep -F "$approved_prerelease_ref" "$case_dir/commands.log" >/dev/null ||
+	fail 'prerelease lock verification did not inspect the exact approved reference'
+grep -F 'cosign verify-attestation' "$case_dir/commands.log" >/dev/null ||
+	fail 'prerelease lock verification skipped credentialless Cosign provenance'
+if grep -E '(docker buildx build|curl |npm |fetch-sources|image-test|gh )' "$case_dir/commands.log" >/dev/null; then
+	fail 'prerelease lock-only verification resolved or prepared an update'
+fi
+expect_failure "$case_dir" 'update mode requires the official Dex master discovery lock' env
 
 update_workflow=$repo/.github/workflows/update-upstream.yml
 ci_workflow=$repo/.github/workflows/ci.yml

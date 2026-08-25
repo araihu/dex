@@ -1,4 +1,4 @@
-FROM ghcr.io/dexidp/dex:master@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
+FROM ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
 
 COPY --chown=1001:1001 web/templates/header.html web/templates/footer.html /srv/dex/web/templates/
 COPY --chown=1001:1001 web/static/araihu-* web/static/appearance.js web/static/theme-default.js web/static/favicon.svg web/static/favicon-32.png web/static/icons.svg /srv/dex/web/static/

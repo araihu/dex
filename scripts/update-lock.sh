@@ -12,6 +12,9 @@ lock_file=$repo/versions.env
 canonical_report_file=$repo/.cache/update-report.md
 report_file=${UPDATE_REPORT_FILE:-$canonical_report_file}
 official_image=ghcr.io/dexidp/dex:master
+approved_verify_image=ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77
+approved_verify_commit=ab64ed778070e983cbb10cfc07ea4bb397d14312
+approved_verify_digest=sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b
 official_repository=dexidp/dex
 official_identity=https://github.com/dexidp/dex/.github/workflows/artifacts.yaml@refs/heads/master
 official_issuer=https://token.actions.githubusercontent.com
@@ -234,7 +237,13 @@ old_source_hash=$(lock_value DEX_SOURCE_SHA256)
 require_commit "$old_commit" DEX_COMMIT
 case "$old_image" in
 	"$official_image"@*) old_digest=${old_image#*@} ;;
-	*) die 'DEX_IMAGE must pin the official Dex master image' ;;
+	"$approved_verify_image@$approved_verify_digest")
+		[ "$mode" = verify ] || die 'update mode requires the official Dex master discovery lock'
+		[ "$old_commit" = "$approved_verify_commit" ] ||
+			die 'approved Dex prerelease commit does not match DEX_COMMIT'
+		old_digest=$approved_verify_digest
+		;;
+	*) die 'DEX_IMAGE must pin the official Dex master image or approved verification prerelease' ;;
 esac
 require_digest "$old_digest" DEX_IMAGE
 [ "$old_source_url" = "https://github.com/dexidp/dex/archive/$old_commit.tar.gz" ] ||

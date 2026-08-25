@@ -7,7 +7,12 @@
 
 ## Summary
 
-Create a thin AraiHu frontend overlay on the official Dex `master` container. The image preserves Dex authentication behavior, templates, form semantics, TOTP flow, and WebAuthn JavaScript. It adds the released Goshtoso theme catalog, AraiHu brand assets, a small accessible client-side theme control, the established AraiHu browser-storage consent contract, and deterministic supply-chain evidence.
+Create a thin AraiHu frontend overlay on the official Dex prerelease container for
+commit `ab64ed778070e983cbb10cfc07ea4bb397d14312`. The image preserves Dex
+authentication behavior, templates, form semantics, TOTP flow, and WebAuthn
+JavaScript. It adds the released Goshtoso theme catalog, AraiHu brand assets, a
+small accessible client-side theme control, the established AraiHu
+browser-storage consent contract, and deterministic supply-chain evidence.
 
 The implementation is not a Dex source fork. It derives from an upstream image pinned by multi-architecture digest, sets `DEX_FRONTEND_DIR=/srv/dex/web`, and overwrites only shared frontend files and branded assets already present in that filesystem tree. Disabling `DEX_FRONTEND_DIR` restores the embedded upstream frontend without changing the binary or stored identity data.
 
@@ -37,7 +42,10 @@ The implementation is not a Dex source fork. It derives from an upstream image p
 
 ### Dex
 
-The design baseline is official Dex `master` commit `ab64ed778070e983cbb10cfc07ea4bb397d14312`, published in `ghcr.io/dexidp/dex:master` as multi-architecture index digest `sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b`.
+The design baseline is official Dex commit
+`ab64ed778070e983cbb10cfc07ea4bb397d14312`, published as
+`ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b`.
+The generic `:master` tag is a discovery lane, not an accepted build contract.
 
 That commit requires these eleven templates:
 
@@ -53,7 +61,7 @@ That commit requires these eleven templates:
 - `totp_verify.html`
 - `webauthn_verify.html`
 
-Dex loads embedded web assets unless `frontend.dir` or `DEX_FRONTEND_DIR` names a filesystem directory. Its official image already contains the matching `web` tree at `/srv/dex/web`. The official `master` image is Alpine-based, runs as `dex:dex` (`1001:1001`), and includes the upstream `docker-entrypoint` and `gomplate` binaries.
+Dex loads embedded web assets unless `frontend.dir` or `DEX_FRONTEND_DIR` names a filesystem directory. Its official image already contains the matching `web` tree at `/srv/dex/web`. The locked prerelease image is Alpine-based, runs as `dex:dex` (`1001:1001`), and includes the upstream `docker-entrypoint` and `gomplate` binaries.
 
 Dex `master` renders TOTP enrollment and verification through `totp_verify.html`. It renders WebAuthn registration and login through `webauthn_verify.html`; that template contains upstream inline WebAuthn JavaScript and an inline event handler. The overlay must not rewrite this code.
 
@@ -351,7 +359,8 @@ Acceptance also requires:
 Rollback has no data migration or identity transformation.
 
 1. Set `DEX_FRONTEND_DIR=` to make the same Dex binary use its embedded upstream frontend.
-2. If the overlay image itself is suspect, restore the previously pinned official `ghcr.io/dexidp/dex:master@sha256:...` image.
+2. If the overlay image itself is suspect, restore the exact previously pinned
+   official prerelease image and digest from `versions.env`.
 3. If only the configured default theme is invalid, remove `ARAIHU_DEX_THEME` or set it to `araihu`.
 
 Rollback verification covers login, consent, TOTP, WebAuthn, home, and logout against the embedded upstream frontend. The homelab adoption plan must retain the prior image digest until its own separately authorized rollout is accepted.
@@ -374,7 +383,8 @@ Separate explicit approvals are required for:
 
 The project is implementation-complete only when:
 
-1. The derived image is a thin overlay on the locked official Dex `master` digest.
+1. The derived image is a thin overlay on the exact locked official Dex
+   prerelease tag and digest.
 2. All eleven upstream pages retain authentication semantics and receive the selected Goshtoso theme.
 3. AraiHu is the default and every selected-release Goshtoso theme is client-selectable.
 4. `ARAIHU_DEX_THEME`, consent, no-storage fallback, and dark mode behave exactly as documented.

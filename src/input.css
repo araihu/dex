@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@import "../.cache/sources/goshtoso/goshtoso-theme.css";
+@import "./dex-adapter.css";
+
+@source "../.cache/sources/dex/web/templates/approval.html";
+@source "../.cache/sources/dex/web/templates/device.html";
+@source "../.cache/sources/dex/web/templates/device_success.html";
+@source "../.cache/sources/dex/web/templates/error.html";
+@source "../.cache/sources/dex/web/templates/home.html";
+@source "../.cache/sources/dex/web/templates/login.html";
+@source "../.cache/sources/dex/web/templates/logout.html";
+@source "../.cache/sources/dex/web/templates/oob.html";
+@source "../.cache/sources/dex/web/templates/password.html";
+@source "../.cache/sources/dex/web/templates/totp_verify.html";
+@source "../.cache/sources/dex/web/templates/webauthn_verify.html";
+@source "./header.html";
+@source "./footer.html";
+@source inline("dark hidden");

@@ -22,12 +22,12 @@ test.describe('embedded upstream frontend rollback', () => {
     await expect(page.locator('form')).toHaveAttribute('method', 'post');
     await expect(page.getByLabel('Email Address')).toBeFocused();
 
-    await submitPassword(page, 'test@example.invalid');
+    await submitPassword(page, 'rollback@example.invalid');
     await expect(page.getByRole('heading', { name: 'Two-factor authentication' })).toBeVisible();
     await expect(page.getByRole('img', { name: 'QR code' })).toHaveAttribute('src', /^data:image\/png;base64,/);
     await expect(page.getByLabel('One-time code')).toBeFocused();
 
-    const secret = readTOTPSecret('00000000-0000-4000-8000-000000000001');
+    const secret = readTOTPSecret('00000000-0000-4000-8000-000000000008');
     await submitTOTP(page, totp(secret, -1));
     await expect(page.getByRole('heading', { name: 'Register security key' })).toBeVisible();
     await expect(page.locator('#webauthn-btn')).toHaveAttribute('type', 'button');
@@ -44,7 +44,7 @@ test.describe('embedded upstream frontend rollback', () => {
     await expect(page).toHaveURL(/\/client\/callback\?/);
 
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'test-user' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'rollback-user' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Log out' })).toHaveAttribute('href', new URL('/logout', baseURL()).href);
 
     await page.goto('/logout');

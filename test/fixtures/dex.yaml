@@ -128,3 +128,12 @@ staticPasswords:
     groups:
       - test-group
     userID: 00000000-0000-4000-8000-000000000007
+  - email: rollback@example.invalid
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: rollback-user
+    name: Rollback Test User
+    emailVerified: true
+    preferredUsername: rollback-user
+    groups:
+      - test-group
+    userID: 00000000-0000-4000-8000-000000000008

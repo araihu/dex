@@ -73,6 +73,9 @@ test('generation emits only the approved deterministic overlay', async () => {
   assert.match(header, /<label[^>]+for="araihu-theme">Tema<\/label>/);
   assert.match(header, /<select[^>]+id="araihu-theme"[^>]+aria-label="Tema"/);
   assert.match(header, /<button[^>]+type="button"[^>]+aria-label="Ativar modo escuro"[^>]+aria-pressed="false"/);
+  assert.deepEqual([...header.matchAll(/<script\b[^>]*>/g)].map((match) => match[0]), [
+    '<script defer src="{{ url .ReqPath "static/appearance.js" }}">',
+  ]);
   assert.equal((header.match(/<option value=/g) ?? []).length, 16);
   assert.doesNotMatch(header, /{{ url \.ReqPath logo }}/);
   assert.match(header, /{{ url \.ReqPath "static\/araihu-logo\.svg" }}/);

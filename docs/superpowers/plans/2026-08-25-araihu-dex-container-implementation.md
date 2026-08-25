@@ -486,6 +486,20 @@ git add .github/workflows/release.yml scripts/verify-release.sh \
 git commit -m 'ci: prepare signed multi-architecture releases'
 ```
 
+### Task 8 review-fix ledger
+
+Review rejection addressed by `773ba305e790c8671080ca366070ca95a34575f4`:
+
+- update preparation derives the official Dex pseudo-version label and writes
+  an immutable version-tag-plus-digest lock;
+- the release workflow binds the temporary candidate digest to the locally
+  verified OCI archive before signing, attesting, remote verification, and
+  stable-alias promotion;
+- local attestation verification enforces in-toto type, per-platform subject
+  name/digest, and non-empty SPDX/SLSA predicate bodies;
+- update/release policy tests and SDD evidence pass; no publication or remote
+  lifecycle action was executed.
+
 ## Task 9: Fresh verification and implementation review
 
 **Files:**

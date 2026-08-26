@@ -89,7 +89,7 @@ abort 'release metadata must not use wall-clock date' if metadata_run.match?(/(^
   'org.opencontainers.image.revision=',
   'org.opencontainers.image.version=',
   'org.opencontainers.image.source=',
-  'org.opencontainers.image.licenses=',
+  'org.opencontainers.image.licenses=Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause',
   'io.araihu.dex.upstream.revision=',
   'io.araihu.dex.upstream.digest=',
   'io.araihu.dex.goshtoso.version=',
@@ -110,11 +110,21 @@ abort 'pre-login multi-architecture gate must carry provenance and SBOM' unless 
 
 scan = step(steps, 'scan')
 abort 'vulnerability scan action missing' unless scan['uses'].start_with?('aquasecurity/trivy-action@')
-abort 'scan report must be retained as SARIF' unless scan.dig('with', 'format') == 'sarif' && scan.dig('with', 'output') == 'release-evidence/vulnerability-report.sarif'
+abort 'Trivy version must be deterministic' unless scan.dig('with', 'version') == '0.74.0'
+abort 'amd64 scan must target the exact published platform manifest' unless scan.dig('with', 'image-ref') == '${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}'
+abort 'scan report must be retained as SARIF' unless scan.dig('with', 'format') == 'sarif' && scan.dig('with', 'output') == 'release-evidence/vulnerability-report-amd64.sarif'
 abort 'Trivy gate must fail on selected vulnerabilities' unless scan.dig('with', 'exit-code') == '1'
 abort 'Trivy severity policy must be HIGH,CRITICAL' unless scan.dig('with', 'severity') == 'HIGH,CRITICAL'
 abort 'Trivy SARIF output must be limited to selected severities' unless scan.dig('with', 'limit-severities-for-sarif') == true
 abort 'Trivy ignore-unfixed policy must be explicit' unless scan.dig('with', 'ignore-unfixed') == true
+
+scan_arm64 = step(steps, 'scan_arm64')
+abort 'arm64 vulnerability scan action missing' unless scan_arm64['uses'] == scan['uses']
+abort 'arm64 scan must target the exact published platform manifest' unless scan_arm64.dig('with', 'image-ref') == '${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}'
+abort 'arm64 scan report must be retained as SARIF' unless scan_arm64.dig('with', 'format') == 'sarif' && scan_arm64.dig('with', 'output') == 'release-evidence/vulnerability-report-arm64.sarif'
+%w[version exit-code ignore-unfixed severity limit-severities-for-sarif].each do |key|
+  abort "arm64 scan #{key} policy mismatch" unless scan_arm64.dig('with', key) == scan.dig('with', key)
+end
 
 prepare_evidence = step(steps, 'prepare_evidence')
 abort 'release evidence directory must be created before Trivy' unless prepare_evidence['run'].to_s.include?('mkdir -p release-evidence')
@@ -148,6 +158,8 @@ abort 'candidate build must carry exact platform/provenance settings' unless pub
 candidate = step(steps, 'candidate')
 candidate_run = candidate['run'].to_s
 abort 'candidate digest must match the verified OCI archive' unless candidate_run.include?('tar -xOf "$OCI_ARCHIVE" index.json') && candidate_run.include?('root_digest') && candidate_run.include?('blob_digest') && candidate_run.include?('remote_digest') && candidate_run.include?('remote_digest" = "$local_digest"')
+abort 'candidate step must resolve exact amd64 and arm64 manifest digests' unless candidate_run.include?('imagetools inspect --raw "$IMAGE@$local_digest"') && candidate_run.include?('candidate-index.json') && candidate_run.include?('for architecture in amd64 arm64') && candidate_run.include?('${architecture}_digest=$platform_digest')
+abort 'candidate platform index must not be read through its mutable tag' if candidate_run.include?('imagetools inspect --raw "$CANDIDATE"')
 
 attest = step(steps, 'attest')
 abort 'GitHub build provenance attestation missing' unless attest['uses'].start_with?('actions/attest-build-provenance@')
@@ -186,10 +198,13 @@ end
 abort 'release evidence upload must fail on missing files' unless upload.dig('with', 'if-no-files-found') == 'error'
 
 ids = steps.map { |candidate| candidate['id'] }.compact
-%w[trust multiarch scan].each do |id|
+%w[trust multiarch].each do |id|
   abort "#{id} must run before registry login" unless ids.index(id) < ids.index('login')
 end
 abort 'release evidence directory must be prepared before Trivy scan' unless ids.index('prepare_evidence') < ids.index('scan')
+abort 'amd64 scan must precede arm64 scan' unless ids.index('scan') < ids.index('scan_arm64')
+abort 'exact candidate must be published and resolved before Trivy scans' unless ids.index('candidate') < ids.index('scan')
+abort 'both platform scans must pass before attestation' unless ids.index('scan_arm64') < ids.index('attest')
 %w[attest sign verify_candidate evidence upload promote verify_aliases].each do |id|
   abort "#{id} must run after publication" unless ids.index(id) > ids.index('publish')
 end
@@ -227,8 +242,8 @@ source, target, old, new = sys.argv[1:]
 old = old.replace(r'\n', '\n')
 new = new.replace(r'\n', '\n')
 text = pathlib.Path(source).read_text()
-if text.count(old) != 1:
-    raise SystemExit(f"mutation source count for {old!r}: {text.count(old)}")
+if text.count(old) < 1:
+    raise SystemExit(f"mutation source missing for {old!r}")
 pathlib.Path(target).write_text(text.replace(old, new))
 PY
 }
@@ -259,6 +274,10 @@ assert_workflow_rejected trivy_exit "exit-code: '1'" "exit-code: '0'"
 assert_workflow_rejected trivy_severity 'severity: HIGH,CRITICAL' 'severity: LOW'
 assert_workflow_rejected trivy_sarif_severity 'limit-severities-for-sarif: true' 'limit-severities-for-sarif: false'
 assert_workflow_rejected trivy_ignore_unfixed 'ignore-unfixed: true' 'ignore-unfixed: false'
+assert_workflow_rejected trivy_amd64_subject 'image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}' 'image-ref: araihu-dex-release:${{ github.sha }}'
+assert_workflow_rejected trivy_arm64_subject 'image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}' 'image-ref: araihu-dex-release:${{ github.sha }}-arm64'
+assert_workflow_rejected candidate_index_subject 'imagetools inspect --raw "$IMAGE@$local_digest"' 'imagetools inspect --raw "$CANDIDATE"'
+assert_workflow_rejected license_label 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause' 'Apache-2.0 AND MIT AND OFL-1.1'
 assert_workflow_rejected evidence_directory 'mkdir -p release-evidence' 'true # evidence directory omitted'
 assert_workflow_rejected multiarch_platform '--platform "$PLATFORMS"' '--platform linux/amd64'
 assert_workflow_rejected multiarch_verify 'scripts/verify-release.sh local "$OCI_ARCHIVE"' 'true # multiarch verification omitted'
@@ -402,7 +421,7 @@ def image(architecture, os_name='linux'):
         'org.opencontainers.image.revision': '0123456789abcdef0123456789abcdef01234567',
         'org.opencontainers.image.version': 'v1.2.3',
         'org.opencontainers.image.source': 'https://github.com/araihu/dex',
-        'org.opencontainers.image.licenses': 'Apache-2.0 AND MIT AND OFL-1.1',
+        'org.opencontainers.image.licenses': 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause',
         'io.araihu.dex.upstream.revision': versions['DEX_COMMIT'],
         'io.araihu.dex.upstream.digest': versions['DEX_IMAGE'].split('@', 1)[1],
         'io.araihu.dex.goshtoso.version': versions['GOSHTOSO_VERSION'],
@@ -616,7 +635,7 @@ case "$*" in
 				"org.opencontainers.image.revision":$revision,
 				"org.opencontainers.image.version":"v1.2.3",
 				"org.opencontainers.image.source":"https://github.com/araihu/dex",
-				"org.opencontainers.image.licenses":"Apache-2.0 AND MIT AND OFL-1.1",
+				"org.opencontainers.image.licenses":"Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause",
 				"io.araihu.dex.upstream.revision":$upstream_revision,
 				"io.araihu.dex.upstream.digest":$upstream_digest,
 				"io.araihu.dex.goshtoso.version":$goshtoso,

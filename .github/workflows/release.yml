@@ -85,7 +85,7 @@ jobs:
               "org.opencontainers.image.revision=$GITHUB_SHA" \
               "org.opencontainers.image.version=$version" \
               'org.opencontainers.image.source=https://github.com/araihu/dex' \
-              'org.opencontainers.image.licenses=Apache-2.0 AND MIT AND OFL-1.1' \
+              'org.opencontainers.image.licenses=Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause' \
               "io.araihu.dex.upstream.revision=$DEX_COMMIT" \
               "io.araihu.dex.upstream.digest=$upstream_digest" \
               "io.araihu.dex.goshtoso.version=$GOSHTOSO_VERSION" \
@@ -140,7 +140,7 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Build local amd64 acceptance image
+      - name: Build local architecture acceptance images
         env:
           LABELS: ${{ steps.release.outputs.labels }}
           LOCAL_IMAGE: araihu-dex-release:${{ github.sha }}
@@ -158,12 +158,20 @@ jobs:
             --build-arg "SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}" \
             "${label_args[@]}" \
             .
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            --tag "$LOCAL_IMAGE-arm64" \
+            --build-arg "SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}" \
+            "${label_args[@]}" \
+            .
 
       - name: Run real-image and visual acceptance
         env:
           LOCAL_IMAGE: araihu-dex-release:${{ github.sha }}
         run: |
           sh test/image-overlay_test.sh "$LOCAL_IMAGE"
+          sh test/image-overlay_test.sh "$LOCAL_IMAGE-arm64"
           scripts/test-image.sh "$LOCAL_IMAGE"
 
       - name: Build and verify local multi-architecture OCI
@@ -192,18 +200,6 @@ jobs:
       - name: Prepare release evidence directory
         id: prepare_evidence
         run: mkdir -p release-evidence
-
-      - name: Scan local release candidate
-        id: scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: araihu-dex-release:${{ github.sha }}
-          format: sarif
-          output: release-evidence/vulnerability-report.sarif
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          limit-severities-for-sarif: true
 
       - name: Log in to GHCR after all local gates
         id: login
@@ -264,6 +260,45 @@ jobs:
             exit 1
           }
           echo "digest=$local_digest" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect --raw "$IMAGE@$local_digest" > "$RUNNER_TEMP/candidate-index.json"
+          for architecture in amd64 arm64; do
+            platform_digest=$(jq -er --arg architecture "$architecture" '
+              [.manifests[] | select(
+                .platform.os == "linux" and
+                .platform.architecture == $architecture and
+                (.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"
+              )] |
+              if length == 1 then .[0].digest else error("platform manifest count mismatch") end
+            ' "$RUNNER_TEMP/candidate-index.json")
+            [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "${architecture}_digest=$platform_digest" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Scan exact amd64 candidate manifest
+        id: scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}
+          version: 0.74.0
+          format: sarif
+          output: release-evidence/vulnerability-report-amd64.sarif
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
+
+      - name: Scan exact arm64 candidate manifest
+        id: scan_arm64
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}
+          version: 0.74.0
+          format: sarif
+          output: release-evidence/vulnerability-report-arm64.sarif
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
 
       - name: Create GitHub build provenance attestation
         id: attest
@@ -306,7 +341,8 @@ jobs:
           sha256sum release-evidence/frontend-manifest.sha256 > release-evidence/frontend-manifest.sha256.sha256
           cp "$ATTESTATION_BUNDLE" release-evidence/github-attestation.sigstore.json
           for evidence_file in \
-            release-evidence/vulnerability-report.sarif \
+            release-evidence/vulnerability-report-amd64.sarif \
+            release-evidence/vulnerability-report-arm64.sarif \
             release-evidence/release-manifest.json \
             release-evidence/release-manifest.json.sha256 \
             release-evidence/sbom.spdx.json \

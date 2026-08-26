@@ -1,21 +1,31 @@
 # AraiHu Dex Container Design
 
 **Date:** 2026-08-25  
-**Status:** Approved and implemented locally
+**Status:** Approved; security-build amendment approved 2026-08-26
 **Target repository:** `/Users/guilhermecastro/repos/araihu/dex`  
 **Target image:** `ghcr.io/araihu/dex`
 
 ## Summary
 
-Create a thin AraiHu-maintained frontend overlay on the official Dex prerelease container for
+Create an AraiHu-maintained frontend overlay on the official Dex prerelease container for
 commit `ab64ed778070e983cbb10cfc07ea4bb397d14312`. The image preserves Dex
 authentication behavior, templates, form semantics, TOTP flow, and WebAuthn
 JavaScript. It keeps Dex's native logo and favicon hooks by default, adds the
 released Goshtoso theme catalog and optional AraiHu brand assets, a small
 accessible client-side theme control, the established AraiHu browser-storage
-consent contract, and reproducible, verifiable supply-chain evidence.
+consent contract, deterministic frontend assets, and verifiable supply-chain
+evidence. The final
+stage remains based on the official image, while Dex, its entrypoint, and
+gomplate are rebuilt from their exact upstream sources with Go 1.27.0 and the
+minimum patched dependencies needed by the fail-closed vulnerability gate.
 
-The implementation is not a Dex source fork. It derives from an upstream image pinned by multi-architecture digest, sets `DEX_FRONTEND_DIR=/srv/dex/web`, and overwrites only shared frontend files and branded assets already present in that filesystem tree. Disabling `DEX_FRONTEND_DIR` restores the embedded upstream frontend without changing the binary or stored identity data.
+The implementation is not a Dex source fork. It derives from an upstream image
+pinned by multi-architecture digest, rebuilds the same Dex commit without
+authentication-source patches, sets `DEX_FRONTEND_DIR=/srv/dex/web`, and
+overwrites shared frontend files and branded assets already present in that
+filesystem tree. Disabling `DEX_FRONTEND_DIR` restores the embedded upstream
+frontend without changing stored identity data; running the pinned official
+image restores the original upstream binaries.
 
 ## Goals
 
@@ -24,7 +34,7 @@ The implementation is not a Dex source fork. It derives from an upstream image p
 3. Preserve all Dex authentication logic and flow-specific frontend semantics.
 4. Preserve current Dex `master` TOTP enrollment/verification and WebAuthn registration/login behavior.
 5. Use released, verified material from `github.com/araihu/goshtoso` and `github.com/araihu/assets`.
-6. Build reproducible `linux/amd64` and `linux/arm64` platform image bytes and deterministic frontend assets, with SBOM, provenance, and keyless signing.
+6. Build source-pinned `linux/amd64` and `linux/arm64` platform images and deterministic frontend assets, with SBOM, provenance, and keyless signing.
 7. Detect upstream frontend drift before it reaches a release.
 8. Keep rollback to the upstream frontend or upstream image immediate and data-neutral.
 
@@ -94,9 +104,10 @@ AraiHu Assets repository material is Apache-2.0 unless a more specific notice ap
 
 ## Architecture decision
 
-### Selected: thin overlay image
+### Selected: frontend overlay with security rebuild
 
-The final stage starts from the exact upstream multi-architecture digest. It adds only:
+The final stage starts from the exact upstream multi-architecture digest. Its
+frontend additions are limited to:
 
 - shared `header.html` and `footer.html` overrides;
 - generated `static/araihu-styles.css` containing all selected-release Goshtoso themes and the Dex adapter;
@@ -106,7 +117,19 @@ The final stage starts from the exact upstream multi-architecture digest. It add
 - a small entrypoint wrapper;
 - AraiHu overlay notices and licenses.
 
-It sets `DEX_FRONTEND_DIR=/srv/dex/web`. All flow-specific templates remain the files shipped by the upstream image. The wrapper eventually `exec`s the original `/usr/local/bin/docker-entrypoint`, preserving upstream argument handling, config templating, PID 1, signals, and shutdown behavior.
+It also replaces `/usr/local/bin/dex`, `/usr/local/bin/docker-entrypoint`, and
+`/usr/local/bin/gomplate` with source-pinned builds from the same locked Dex and
+gomplate source revisions. The builder is the digest-pinned Go 1.27.0 Alpine
+image. Dex receives no source patch; root `golang.org/x/mod` and the nested API
+gRPC dependency are raised explicitly, with resulting transitive Go-module
+updates captured in the final module metadata. The source acquisition gate
+refuses a future Dex baseline change until these security pins are reviewed.
+Gomplate receives no source patch; only its fixed go-git, gRPC, and OpenTelemetry
+dependencies are selected. This amendment was required after the original
+official binaries failed the HIGH/CRITICAL release gate with detected Go
+standard-library vulnerabilities.
+
+It sets `DEX_FRONTEND_DIR=/srv/dex/web`. All flow-specific templates remain the files shipped by the upstream image. The wrapper eventually `exec`s the rebuilt upstream `/usr/local/bin/docker-entrypoint`, preserving upstream argument handling, config templating, PID 1, signals, and shutdown behavior.
 
 ### Rejected: full frontend snapshot
 
@@ -115,6 +138,10 @@ Copying all eleven templates into the AraiHu repository would work but would cre
 ### Rejected: maintained Dex source fork
 
 A fork is unnecessary because current frontend override hooks cover every required change. A fork would assume responsibility for authentication, MFA, storage, and security patch integration without adding product value.
+
+Recompiling an exact upstream archive with a patched toolchain and dependency
+versions does not create a maintained source fork: no Dex source file or
+authentication behavior is carried as an AraiHu patch.
 
 ## Frontend contract
 
@@ -308,7 +335,9 @@ The OCI creation label and BuildKit `SOURCE_DATE_EPOCH` derive from the exact
 release commit's committer timestamp, not the runner wall clock. Trivy is a
 fail-closed `HIGH,CRITICAL` gate and ignores only unfixed findings, with its
 SARIF output limited to those severities and retained as release evidence.
-Evidence collection and upload complete before stable aliases are promoted.
+Both architecture scans target the exact platform manifest digests extracted
+from the published immutable candidate index. Evidence collection and upload
+complete before stable aliases are promoted.
 
 Determinism is scoped to generated frontend bytes and the platform image
 manifests/configuration produced from the locked source and source-derived
@@ -412,19 +441,20 @@ Rollback verification covers login, consent, TOTP, WebAuthn, home, and logout ag
 The local repository is initialized at `/Users/guilhermecastro/repos/araihu/dex`
 with the established AraiHu Git identity and conventions. Public visibility,
 creation of `github.com/araihu/dex`, initial `main` push, and GHCR publication
-were explicitly authorized on 2026-08-25.
+were explicitly authorized on 2026-08-25. Tag `v0.0.1` was explicitly selected
+on 2026-08-26.
 
 Separate explicit approvals are required for:
 
-- creating a tag or GitHub Release;
+- creating any later tag or a GitHub Release;
 - editing or deploying the homelab.
 
 ## Acceptance criteria
 
 The project is implementation-complete only when:
 
-1. The derived image is a thin overlay on the exact locked official Dex
-   prerelease tag and digest.
+1. The derived image starts from the exact locked official Dex prerelease tag
+   and digest, then rebuilds only the three Go binaries from locked sources.
 2. All eleven upstream pages retain authentication semantics and receive the selected Goshtoso theme.
 3. AraiHu is the default and every selected-release Goshtoso theme is client-selectable.
 4. `ARAIHU_DEX_THEME`, consent, no-storage fallback, and dark mode behave exactly as documented.

@@ -159,6 +159,7 @@ prepare_repository() {
 	locked_commit=${3:-$old_commit}
 	locked_digest=${4:-$old_digest}
 	locked_image=${5:-ghcr.io/dexidp/dex:master@$locked_digest}
+	from_suffix=${6:-}
 	old_archive_hash=$(digest "$(dirname "$root")/old.tar.gz")
 	mkdir -p "$root/scripts" "$root/src" "$root/test" "$root/web" "$root/node_modules" "$root/.cache/sources"
 	cat >"$root/versions.env" <<EOF
@@ -168,7 +169,7 @@ DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$locked_commit.tar.gz
 DEX_SOURCE_FILENAME=dex.tar.gz
 DEX_SOURCE_SHA256=$old_archive_hash
 EOF
-	printf 'FROM %s\n' "$locked_image" >"$root/Dockerfile"
+	printf 'FROM %s%s\n' "$locked_image" "$from_suffix" >"$root/Dockerfile"
 	printf '%s\n' "$current_header" >"$root/src/header.html"
 	printf '%s\n' 'footer base' 'footer overlay' >"$root/src/footer.html"
 	printf "upstream='%s'\n" "$locked_image" >"$root/test/image-overlay_test.sh"
@@ -356,7 +357,7 @@ case_dir=$(make_case changed-update)
 make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
 make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
 prepare_repository "$case_dir/repo" 'header base
-header overlay'
+header overlay' "$old_commit" "$old_digest" "ghcr.io/dexidp/dex:master@$old_digest" ' AS upstream'
 git_metadata_snapshot "$case_dir/repo" >"$case_dir/git-before"
 run_update "$case_dir" env FIXTURE_GENERATE_DELETE=web/obsolete.html
 git_metadata_snapshot "$case_dir/repo" >"$case_dir/git-after"
@@ -366,7 +367,7 @@ grep -Fx "DEX_COMMIT=$new_commit" "$case_dir/repo/versions.env" >/dev/null
 grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:$new_version@$new_digest" "$case_dir/repo/versions.env" >/dev/null
 grep -Fx "DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$new_commit.tar.gz" \
 	"$case_dir/repo/versions.env" >/dev/null
-grep -Fx "FROM ghcr.io/dexidp/dex:$new_version@$new_digest" "$case_dir/repo/Dockerfile" >/dev/null
+grep -Fx "FROM ghcr.io/dexidp/dex:$new_version@$new_digest AS upstream" "$case_dir/repo/Dockerfile" >/dev/null
 grep -Fx "dex_commit=$new_commit" "$case_dir/repo/test/fetch-sources_test.sh" >/dev/null
 grep -Fx "upstream='ghcr.io/dexidp/dex:$new_version@$new_digest'" \
 	"$case_dir/repo/test/image-overlay_test.sh" >/dev/null

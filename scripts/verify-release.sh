@@ -177,7 +177,7 @@ images = {architecture: platform_images[('linux', architecture)] for architectur
 
 required_labels = {
     'org.opencontainers.image.source': 'https://github.com/araihu/dex',
-    'org.opencontainers.image.licenses': 'Apache-2.0 AND MIT AND OFL-1.1',
+    'org.opencontainers.image.licenses': 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause',
     'io.araihu.dex.upstream.revision': os.environ['DEX_COMMIT'],
     'io.araihu.dex.upstream.digest': os.environ['UPSTREAM_DIGEST'],
     'io.araihu.dex.goshtoso.version': os.environ['GOSHTOSO_VERSION'],
@@ -419,7 +419,7 @@ PY
 			[[ -s "$labels" ]] || die "linux/$architecture image config missing"
 			[[ $(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$labels") == https://github.com/araihu/dex ]] ||
 				die "linux/$architecture source label mismatch"
-			[[ $(jq -r '.config.Labels["org.opencontainers.image.licenses"] // empty' "$labels") == 'Apache-2.0 AND MIT AND OFL-1.1' ]] ||
+			[[ $(jq -r '.config.Labels["org.opencontainers.image.licenses"] // empty' "$labels") == 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause' ]] ||
 				die "linux/$architecture license label mismatch"
 			[[ $(jq -r '.config.Labels["io.araihu.dex.upstream.revision"] // empty' "$labels") == "$dex_commit" ]] ||
 				die "linux/$architecture upstream revision label mismatch"

@@ -1,9 +1,11 @@
 # AraiHu Dex
 
-Thin AraiHu-maintained frontend overlay for a locked official Dex prerelease
-image. It preserves Dex authentication behavior, native branding hooks, flow
+AraiHu-maintained frontend overlay for a locked official Dex prerelease image.
+It preserves Dex authentication behavior, native branding hooks, flow
 templates, TOTP, and WebAuthn logic while adding released Goshtoso themes and
-optional AraiHu assets.
+optional AraiHu assets. The final stage remains based on the official image,
+but rebuilds its Dex, entrypoint, and gomplate binaries with Go 1.27.0 to avoid
+vulnerabilities detected in the original toolchain build.
 
 The approved design and implementation plan are in:
 
@@ -13,10 +15,10 @@ The approved design and implementation plan are in:
 ## Lifecycle gates
 
 Public visibility, creation of `github.com/araihu/dex`, initial `main` push,
-and GHCR publication were explicitly authorized on 2026-08-25. A release tag
-and GitHub Release remain separate lifecycle actions and require their own
-explicit versioned authorization. No homelab file is edited or deployment
-performed without separate explicit approval.
+and GHCR publication were explicitly authorized on 2026-08-25. Tag `v0.0.1`
+was explicitly selected on 2026-08-26. A GitHub Release remains a separate
+lifecycle action and is not part of this repository workflow. No homelab file
+is edited or deployment performed without separate explicit approval.
 
 Green tests, a local build, review approval, or this repository's existence do
 not authorize any of those actions.
@@ -29,9 +31,12 @@ exist before that push.
 
 ## Verified source cache
 
-[`versions.env`](versions.env) is the single source lock. It pins the approved
-Dex commit/archive, Goshtoso module/theme/catalog, AraiHu Assets release and
-member manifest, plus the frontend tool baselines. `package-lock.json` also
+[`versions.env`](versions.env) is the upstream/frontend source lock. It pins
+the approved Dex commit/archive and expected dependency baselines, Goshtoso
+module/theme/catalog, AraiHu Assets release and member manifest, plus the
+frontend tool baselines. The Dockerfile separately digest/checksum-pins its Go
+builder and gomplate source and version-pins rebuild dependencies.
+`package-lock.json` also
 pins the exact Fontsource Lato package and integrity used for deterministic
 AraiHu-theme typography. The POSIX acquisition
 boundary verifies every checksum before writing the cache:
@@ -54,6 +59,14 @@ verified `master` commit and digest, reads the official
 `org.opencontainers.image.version` pseudo-version, and writes that version tag
 with the digest as the lock. It never follows the mutable tag in the
 Dockerfile.
+
+Dex and its entrypoint are rebuilt from that exact source archive. Gomplate is
+rebuilt from its exact `v5.2.0` commit. Neither source tree carries an AraiHu
+patch; only dependencies with published fixes are raised before compilation.
+The image carries the Go, musl, gomplate, and downloaded Go-module license
+inventory used by those static binaries.
+To restore the original binaries, run the pinned official image directly.
+Setting `DEX_FRONTEND_DIR` empty restores only its embedded frontend.
 
 The overlay keeps Dex's native logo and favicon by default. Its header still
 uses Dex's `logo` value, so `frontend.logoURL` continues to work from the
@@ -130,7 +143,9 @@ pushes. It publishes only `ghcr.io/araihu/dex` with `vX.Y.Z`, `X.Y`, `X`, and
 `latest`; prerelease, `master`, `edge`, and pull-request tags are rejected. Its
 release index is exactly `linux/amd64,linux/arm64` and carries locked source and
 license labels. Before registry login it reruns trust, generation, policy,
-real-image, visual, local multi-architecture OCI, and vulnerability gates.
+real-image, visual, and local multi-architecture OCI gates. It then publishes
+only the immutable candidate reference and scans both exact platform manifests
+before any stable tag is promoted.
 
 An authorized publication adds BuildKit provenance and an SPDX JSON SBOM,
 GitHub build provenance, and a keyless Cosign signature bound to
@@ -140,14 +155,16 @@ screenshot evidence.
 
 The OCI creation label and `SOURCE_DATE_EPOCH` come from the release commit's
 committer timestamp, so rerunning a release for the same source does not add a
-wall-clock value. Trivy is a fail-closed `HIGH,CRITICAL` gate; it ignores only
-unfixed findings (`ignore-unfixed: true`), limits SARIF to those severities,
-and retains the report as evidence.
+wall-clock value. Trivy 0.74.0 is a fail-closed `HIGH,CRITICAL` gate; it ignores
+only unfixed findings (`ignore-unfixed: true`), limits SARIF to those
+severities, scans both architecture-specific manifests of the exact published
+candidate digest, and retains both reports as evidence.
 
-Reproducibility covers the generated frontend bytes and platform image
-manifests/configuration. BuildKit provenance and SBOM attestations may carry
-invocation-specific envelope metadata on independent rebuilds; release
-verification binds each attestation to the exact platform subject digest.
+Reproducibility covers the generated frontend bytes. Platform builds use pinned
+source/toolchain inputs and expose their exact result through the OCI digest,
+SBOM, and provenance; Alpine package resolution and attestation envelopes may
+vary between independent builds. Release verification binds each attestation
+to the exact platform subject digest.
 
 The candidate reference is retained as an immutable audit alias after its
 temporary publication use (`candidate-${GITHUB_SHA}`). GHCR deletion is scoped

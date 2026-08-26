@@ -19,8 +19,15 @@ fail() {
 	exit 1
 }
 
-upstream_container=$(docker create --entrypoint /bin/true "$upstream")
-derived_container=$(docker create --entrypoint /bin/true "$image")
+arch=$(docker image inspect "$image" --format '{{.Architecture}}')
+case "$arch" in
+	amd64|arm64) ;;
+	*) fail "unsupported image architecture: $arch" ;;
+esac
+platform="linux/$arch"
+
+upstream_container=$(docker create --platform "$platform" --entrypoint /bin/true "$upstream")
+derived_container=$(docker create --platform "$platform" --entrypoint /bin/true "$image")
 mkdir "$tmp/upstream" "$tmp/derived"
 docker export "$upstream_container" | tar -xf - -C "$tmp/upstream"
 docker export "$derived_container" | tar -xf - -C "$tmp/derived"
@@ -39,6 +46,12 @@ while IFS= read -r path; do
 		./usr/share/licenses/araihu-dex/LICENSE|\
 		./usr/share/licenses/araihu-dex/NOTICE|\
 		./usr/share/licenses/araihu-dex/Lato-OFL-1.1.txt|\
+		./usr/share/licenses/araihu-dex/musl-COPYRIGHT.txt|\
+		./usr/share/licenses/araihu-dex/go-BSD-3-Clause.txt|\
+		./usr/share/licenses/araihu-dex/go-module-licenses.sha256|\
+		./usr/share/licenses/araihu-dex/go-modules|\
+		./usr/share/licenses/araihu-dex/go-modules/*|\
+		./usr/share/licenses/araihu-dex/gomplate-MIT.txt|\
 		./usr/share/licenses/araihu-dex/assets-NOTICE|\
 		./usr/share/licenses/araihu-dex/Apache-2.0.txt|\
 		./usr/share/licenses/araihu-dex/heroicons-MIT.txt|\
@@ -61,11 +74,46 @@ done <"$tmp/added.paths"
 	[ -f "$tmp/derived/${path#./}" ] || continue
 	if ! cmp -s "$tmp/upstream/${path#./}" "$tmp/derived/${path#./}"; then
 		case "$path" in
-			./srv/dex/web/templates/header.html|./srv/dex/web/templates/footer.html) ;;
+			./srv/dex/web/templates/header.html|\
+			./srv/dex/web/templates/footer.html|\
+			./usr/local/bin/dex|\
+			./usr/local/bin/docker-entrypoint|\
+			./usr/local/bin/gomplate|\
+			./usr/local/src/dex/go.mod|\
+			./usr/local/src/dex/go.sum|\
+			./usr/local/src/dex/api/v2/go.mod|\
+			./usr/local/src/dex/api/v2/go.sum) ;;
 			*) fail "unapproved upstream file changed: $path" ;;
 		esac
 	fi
 done
+
+assert_go_build() {
+	binary=$1
+	module=$2
+	version=$3
+	build_info=$(go version -m "$tmp/derived/usr/local/bin/$binary") ||
+		fail "$binary does not expose Go build information"
+	printf '%s\n' "$build_info" | grep -F ': go1.27.0' >/dev/null ||
+		fail "$binary was not compiled with Go 1.27.0"
+	if [ -n "$module" ]; then
+		printf '%s\n' "$build_info" |
+			awk -F '\t' -v module="$module" -v version="$version" \
+				'$2 == "dep" && $3 == module && $4 == version { found = 1 } END { exit !found }' ||
+			fail "$binary does not contain $module $version"
+	fi
+}
+
+assert_go_build dex golang.org/x/mod v0.40.0
+assert_go_build docker-entrypoint '' ''
+assert_go_build gomplate github.com/go-git/go-git/v5 v5.19.2
+gomplate_info=$(go version -m "$tmp/derived/usr/local/bin/gomplate")
+printf '%s\n' "$gomplate_info" |
+	awk -F '\t' '$2 == "dep" && $3 == "google.golang.org/grpc" && $4 == "v1.82.1" { found = 1 } END { exit !found }' ||
+	fail 'gomplate does not contain google.golang.org/grpc v1.82.1'
+printf '%s\n' "$gomplate_info" |
+	awk -F '\t' '$2 == "dep" && $3 == "go.opentelemetry.io/otel" && $4 == "v1.44.0" { found = 1 } END { exit !found }' ||
+	fail 'gomplate does not contain go.opentelemetry.io/otel v1.44.0'
 
 for template in approval device device_success error home login logout oob password totp_verify webauthn_verify; do
 	cmp "$tmp/upstream/srv/dex/web/templates/$template.html" \
@@ -89,6 +137,14 @@ for path in \
 	usr/local/bin/araihu-dex-entrypoint; do
 	[ -f "$tmp/derived/$path" ] || fail "required overlay file missing: /$path"
 done
+[ -f "$tmp/derived/usr/share/licenses/araihu-dex/gomplate-MIT.txt" ] ||
+	fail 'Gomplate license is missing'
+[ -f "$tmp/derived/usr/share/licenses/araihu-dex/go-BSD-3-Clause.txt" ] ||
+	fail 'Go license is missing'
+[ -f "$tmp/derived/usr/share/licenses/araihu-dex/musl-COPYRIGHT.txt" ] ||
+	fail 'musl license is missing'
+[ -s "$tmp/derived/usr/share/licenses/araihu-dex/go-module-licenses.sha256" ] ||
+	fail 'Go module license inventory is missing'
 
 [ "$(docker image inspect "$image" --format '{{.Config.User}}')" = '1001:1001' ] ||
 	fail 'derived image user is not 1001:1001'

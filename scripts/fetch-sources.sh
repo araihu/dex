@@ -15,6 +15,10 @@ DEX_IMAGE=
 DEX_SOURCE_URL=
 DEX_SOURCE_FILENAME=
 DEX_SOURCE_SHA256=
+DEX_BASE_X_MOD_VERSION=
+DEX_X_MOD_VERSION=
+DEX_BASE_API_GRPC_VERSION=
+DEX_API_GRPC_VERSION=
 GOSHTOSO_MODULE=
 GOSHTOSO_VERSION=
 GOSHTOSO_MODULE_SUM=
@@ -80,6 +84,10 @@ while IFS= read -r line || [ -n "$line" ]; do
 		DEX_SOURCE_URL) DEX_SOURCE_URL=$value ;;
 		DEX_SOURCE_FILENAME) DEX_SOURCE_FILENAME=$value ;;
 		DEX_SOURCE_SHA256) DEX_SOURCE_SHA256=$value ;;
+		DEX_BASE_X_MOD_VERSION) DEX_BASE_X_MOD_VERSION=$value ;;
+		DEX_X_MOD_VERSION) DEX_X_MOD_VERSION=$value ;;
+		DEX_BASE_API_GRPC_VERSION) DEX_BASE_API_GRPC_VERSION=$value ;;
+		DEX_API_GRPC_VERSION) DEX_API_GRPC_VERSION=$value ;;
 		GOSHTOSO_MODULE) GOSHTOSO_MODULE=$value ;;
 		GOSHTOSO_VERSION) GOSHTOSO_VERSION=$value ;;
 		GOSHTOSO_MODULE_SUM) GOSHTOSO_MODULE_SUM=$value ;;
@@ -158,6 +166,10 @@ case "$DEX_SOURCE_FILENAME" in
 esac
 require_value DEX_SOURCE_SHA256 "$DEX_SOURCE_SHA256"
 require_sha256 DEX_SOURCE_SHA256 "$DEX_SOURCE_SHA256"
+require_value DEX_BASE_X_MOD_VERSION "$DEX_BASE_X_MOD_VERSION"
+require_value DEX_X_MOD_VERSION "$DEX_X_MOD_VERSION"
+require_value DEX_BASE_API_GRPC_VERSION "$DEX_BASE_API_GRPC_VERSION"
+require_value DEX_API_GRPC_VERSION "$DEX_API_GRPC_VERSION"
 require_value GOSHTOSO_MODULE "$GOSHTOSO_MODULE"
 require_value GOSHTOSO_VERSION "$GOSHTOSO_VERSION"
 require_value GOSHTOSO_MODULE_SUM "$GOSHTOSO_MODULE_SUM"
@@ -379,6 +391,23 @@ assets_verbose="$fetch_cache/.assets-verbose.$$"
 validate_archive "$dex_archive" 'Dex source' "$dex_listing" "$dex_verbose"
 validate_archive "$assets_archive" 'Assets' "$assets_listing" "$assets_verbose"
 
+dex_prefix=dex-$DEX_COMMIT/
+module_version() {
+	member=$1
+	module=$2
+	label=$3
+	count=$(tar -xOzf "$dex_archive" "$dex_prefix$member" |
+		awk -v module="$module" '$1 == module { count++ } END { print count + 0 }')
+	[ "$count" -eq 1 ] || die "$label baseline is missing or duplicated"
+	tar -xOzf "$dex_archive" "$dex_prefix$member" |
+		awk -v module="$module" '$1 == module { print $2; exit }'
+}
+
+[ "$(module_version go.mod golang.org/x/mod 'Dex x/mod')" = "$DEX_BASE_X_MOD_VERSION" ] ||
+	die 'Dex x/mod baseline changed; review security pins manually'
+[ "$(module_version api/v2/go.mod google.golang.org/grpc 'Dex API gRPC')" = "$DEX_BASE_API_GRPC_VERSION" ] ||
+	die 'Dex API gRPC baseline changed; review security pins manually'
+
 assets_stage="$fetch_cache/.assets-stage.$$"
 dex_stage="$fetch_cache/.dex-stage.$$"
 catalog_work="$fetch_cache/.catalog-work.$$"
@@ -434,7 +463,6 @@ done
 install_asset_tree "$assets_stage" "$fetch_cache/assets"
 assets_stage=
 
-dex_prefix=dex-$DEX_COMMIT/
 for template in \
 	approval.html \
 	device.html \

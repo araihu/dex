@@ -24,7 +24,9 @@ digest() {
 
 dex_commit=ab64ed778070e983cbb10cfc07ea4bb397d14312
 dex_root="$tmp/dex-tree/dex-$dex_commit"
-mkdir -p "$dex_root/web/templates"
+mkdir -p "$dex_root/web/templates" "$dex_root/api/v2"
+printf 'module github.com/dexidp/dex/v2\n\nrequire (\n\tgolang.org/x/mod v0.37.0 // indirect\n)\n' >"$dex_root/go.mod"
+printf 'module github.com/dexidp/dex/api/v2\n\nrequire (\n\tgoogle.golang.org/grpc v1.82.0\n)\n' >"$dex_root/api/v2/go.mod"
 for template in \
 	approval.html \
 	device.html \
@@ -132,6 +134,23 @@ if FETCH_CACHE="$tmp/cache" VERSIONS_FILE="$tmp/fixture.env" \
 	exit 1
 fi
 grep -F 'Dex source checksum mismatch' "$tmp/dex-error"
+
+sed 's|golang.org/x/mod v0.37.0|golang.org/x/mod v0.99.0|' \
+	"$dex_root/go.mod" >"$dex_root/go.mod.changed"
+mv "$dex_root/go.mod.changed" "$dex_root/go.mod"
+baseline_archive="$tmp/dex-baseline-changed.tar.gz"
+tar -czf "$baseline_archive" -C "$tmp/dex-tree" "dex-$dex_commit"
+baseline_hash=$(digest "$baseline_archive")
+write_lock "$tmp/baseline-changed.env" \
+	"file://$baseline_archive" "$baseline_hash" \
+	"file://$asset_archive" "$asset_hash" \
+	"file://$release_sums" "$release_sums_hash"
+if FETCH_CACHE="$tmp/baseline-changed-cache" VERSIONS_FILE="$tmp/baseline-changed.env" \
+	"$repo/scripts/fetch-sources.sh" 2>"$tmp/baseline-error"; then
+	echo 'expected Dex dependency baseline failure' >&2
+	exit 1
+fi
+grep -F 'Dex x/mod baseline changed; review security pins manually' "$tmp/baseline-error"
 
 bad_release_sums="$tmp/bad-SHA256SUMS"
 cp "$release_sums" "$bad_release_sums"

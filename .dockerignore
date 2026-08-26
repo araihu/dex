@@ -6,6 +6,9 @@
 !.cache/sources/assets/licenses/
 !.cache/sources/assets/licenses/Apache-2.0.txt
 !.cache/sources/assets/licenses/heroicons-MIT.txt
+!.cache/sources/downloads/
+!.cache/sources/downloads/dex.tar.gz
+!versions.env
 !web/
 !web/templates/
 !web/templates/header.html
@@ -26,3 +29,4 @@
 !NOTICE
 !licenses/
 !licenses/Lato-OFL-1.1.txt
+!licenses/musl-COPYRIGHT.txt

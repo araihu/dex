@@ -438,8 +438,13 @@ write_prefixed_line "$stage_lock" 'DEX_COMMIT=' "DEX_COMMIT=$new_commit"
 write_prefixed_line "$stage_lock" 'DEX_IMAGE=' "DEX_IMAGE=$new_image"
 write_prefixed_line "$stage_lock" 'DEX_SOURCE_URL=' "DEX_SOURCE_URL=$new_source_url"
 write_prefixed_line "$stage_lock" 'DEX_SOURCE_SHA256=' "DEX_SOURCE_SHA256=$new_source_hash"
-[ "$(sed -n '1p' "$stage/Dockerfile")" = "FROM $old_image" ] || die 'Dockerfile base does not match DEX_IMAGE'
-write_prefixed_line "$stage/Dockerfile" 'FROM ' "FROM $new_image"
+old_from=$(sed -n '1p' "$stage/Dockerfile")
+case "$old_from" in
+	"FROM $old_image") new_from="FROM $new_image" ;;
+	"FROM $old_image AS upstream") new_from="FROM $new_image AS upstream" ;;
+	*) die 'Dockerfile base does not match DEX_IMAGE' ;;
+esac
+write_prefixed_line "$stage/Dockerfile" "$old_from" "$new_from"
 grep -F "$old_image" "$stage/test/image-overlay_test.sh" >/dev/null ||
 	die 'image overlay fixture does not match DEX_IMAGE'
 write_prefixed_line "$stage/test/image-overlay_test.sh" 'upstream=' "upstream='$new_image'"

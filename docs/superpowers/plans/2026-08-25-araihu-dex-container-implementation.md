@@ -8,9 +8,16 @@
 > theme paths. Goshtoso tokens, theme selection, storage consent, and all
 > authentication-flow boundaries remain unchanged.
 
-**Goal:** Build and verify a thin, AraiHu-branded overlay image at `ghcr.io/araihu/dex` while preserving the official Dex `master` authentication frontend and logic.
+> **Security-build amendment (2026-08-26):** After the locked official image
+> failed the release scan with detected HIGH Go vulnerabilities, the user
+> approved recompiling Dex with Go 1.27.0. The final stage still starts from
+> the locked official image, but replaces Dex, its entrypoint, and gomplate
+> with builds from their exact upstream revisions and fixed dependencies. No
+> Dex authentication source file is patched.
 
-**Architecture:** Generate deterministic CSS/asset bytes from pinned Goshtoso and AraiHu Assets releases, copy only shared header/footer and branded static files over a digest-pinned official Dex image, then validate `ARAIHU_DEX_THEME` in a minimal shell entrypoint before delegating to Dex's original entrypoint. The implementation never vendors or overrides flow templates. Platform image manifests/configuration are reproducible; BuildKit attestation envelopes are verified by subject digest and may vary per invocation.
+**Goal:** Build and verify an AraiHu-branded overlay image at `ghcr.io/araihu/dex` while preserving the official Dex `master` authentication frontend and logic.
+
+**Architecture:** Generate deterministic CSS/asset bytes from pinned Goshtoso and AraiHu Assets releases, rebuild the three upstream Go binaries from locked source revisions with Go 1.27.0 and fixed dependencies, copy only shared header/footer and branded static files over a digest-pinned official Dex image, then validate `ARAIHU_DEX_THEME` in a minimal shell entrypoint before delegating to the rebuilt upstream entrypoint. The implementation never vendors or overrides flow templates. Frontend bytes are reproducible; platform artifacts are identified by digest and verified through SBOM/provenance.
 
 **Tech Stack:** Docker BuildKit/buildx, POSIX `sh`, Node.js built-ins, Tailwind CSS 4.3.3, Playwright, Axe, Cosign, Syft/BuildKit SBOM and GitHub Actions.
 
@@ -354,7 +361,7 @@ Expected: nonzero, `./entrypoint.sh: not found`.
 
 - [ ] Implement a POSIX shell wrapper with only three branches: explicit empty frontend rollback, exact theme allowlist validation, and rendering of writable `theme-default.js` from the root-owned immutable template before `exec` of `${UPSTREAM_ENTRYPOINT:-/usr/local/bin/docker-entrypoint}`. Repeated starts always regenerate from that template, so a partial served file is never executed. Do not use `eval`, `envsubst`, JSON tools, or log environment values.
 - [ ] Add a generated parser-blocking `theme-default.js` bootstrap with the released theme-key allowlist, synchronous cookie/localStorage fallback, and a validated default-theme marker; include it in the manifest. The image copies the rendered output as `1001:1001` and the same generated marker source as root-owned `theme-default.template.js`.
-- [ ] Write a single-stage final Dockerfile `FROM ghcr.io/dexidp/dex:<approved-prerelease>@sha256:...`. Copy only the two shared templates, the immutable theme bootstrap source, `web/static/araihu-*`, appearance/default scripts, approved logo/favicon/icons, notices, and wrapper. Use `COPY --chown=1001:1001` for writable overlay files and root ownership for the immutable source; keep `USER 1001:1001`; set `DEX_FRONTEND_DIR=/srv/dex/web`; set the wrapper as `ENTRYPOINT`; preserve upstream CMD.
+- [ ] Write a multi-stage Dockerfile whose final stage remains `FROM ghcr.io/dexidp/dex:<approved-prerelease>@sha256:...`. Rebuild only Dex, docker-entrypoint, and gomplate from their locked upstream revisions with Go 1.27.0 and reviewed dependency pins; carry required license inventories. Copy only the two shared templates, immutable theme bootstrap source, `web/static/araihu-*`, appearance/default scripts, approved logo/favicon/icons, notices, and wrapper. Use `COPY --chown=1001:1001` for writable overlay files and root ownership for the immutable source; keep `USER 1001:1001`; set `DEX_FRONTEND_DIR=/srv/dex/web`; set the wrapper as `ENTRYPOINT`; preserve upstream CMD.
 - [ ] Add a static allowlist assertion to `image-overlay_test.sh`: compare filesystem listings of the upstream and derived images and fail if a flow template differs or any unapproved path appears.
 - [ ] Build and test the local image.
 
@@ -485,6 +492,7 @@ git commit -m 'ci: verify overlay and prepare upstream updates'
 - [ ] Configure stable tags only: `vX.Y.Z`, `X.Y`, `X`, and `latest`. Reject prerelease tags until separately designed.
 - [ ] Build exactly `linux/amd64,linux/arm64` to `ghcr.io/araihu/dex`. Emit OCI labels for AraiHu revision/version, upstream commit/digest, Goshtoso/Assets versions, creation time, source, and licenses.
 - [ ] Verify the local OCI archive, bind its root digest to the temporary candidate reference, and promote only that verified candidate digest to stable aliases.
+- [ ] Scan the exact `amd64` and `arm64` manifests resolved from that published candidate, and require both scans before attestation or stable-tag promotion.
 - [ ] Use BuildKit provenance plus SPDX JSON SBOM, GitHub artifact attestation, and Cosign keyless signing bound to the release workflow identity. Upload manifest/checksum, SBOM, scan, and screenshot evidence.
 - [ ] Set workflow permissions exactly to `contents: read`, `packages: write`, `id-token: write`, and `attestations: write`. Do not add deployments, environments, secrets, or homelab credentials.
 - [ ] Give `verify-release.sh` two explicit modes. `local <oci.tar>` validates index platforms, per-platform labels, identical frontend manifest bytes, and embedded SBOM/provenance. `remote <image-ref>` additionally validates the published subject, signature identity, and tag mapping.

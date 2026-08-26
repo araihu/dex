@@ -138,33 +138,29 @@ and grants no merge, release, publication, or deployment authority.
 
 ## Prepared release workflow
 
-The unexecuted release workflow accepts only canonical stable `vX.Y.Z` tag
+The release workflow accepts only canonical stable `vX.Y.Z` tag
 pushes. It publishes only `ghcr.io/araihu/dex` with `vX.Y.Z`, `X.Y`, `X`, and
 `latest`; prerelease, `master`, `edge`, and pull-request tags are rejected. Its
-release index is exactly `linux/amd64,linux/arm64` and carries locked source and
-license labels. Before registry login it reruns trust, generation, policy,
-real-image, visual, and local multi-architecture OCI gates. It then publishes
-only the immutable candidate reference and scans both exact platform manifests
-before any stable tag is promoted.
+release image is exactly `linux/amd64` and carries locked source and license
+labels. Before registry login it reruns trust, generation, policy, real-image,
+and visual gates. It then publishes only the immutable candidate reference and
+scans its exact manifest before any stable tag is promoted.
 
-An authorized publication adds BuildKit provenance and an SPDX JSON SBOM,
-GitHub build provenance, and a keyless Cosign signature bound to
+An authorized publication adds a keyless Cosign signature bound to
 `.github/workflows/release.yml` at the exact release tag. The workflow retains
-the OCI manifest and checksum, frontend checksums, SBOM, provenance, scan, and
-screenshot evidence.
+the OCI manifest and checksum, frontend checksums, scan, and screenshot
+evidence.
 
 The OCI creation label and `SOURCE_DATE_EPOCH` come from the release commit's
 committer timestamp, so rerunning a release for the same source does not add a
 wall-clock value. Trivy v0.74.0 is a fail-closed `HIGH,CRITICAL` gate; it ignores
 only unfixed findings (`ignore-unfixed: true`), limits SARIF to those
-severities, scans both architecture-specific manifests of the exact published
-candidate digest, and retains both reports as evidence.
+severities, scans the exact published candidate digest, and retains the report
+as evidence.
 
-Reproducibility covers the generated frontend bytes. Platform builds use pinned
-source/toolchain inputs and expose their exact result through the OCI digest,
-SBOM, and provenance; Alpine package resolution and attestation envelopes may
-vary between independent builds. Release verification binds each attestation
-to the exact platform subject digest.
+Reproducibility covers the generated frontend bytes. The amd64 build uses
+pinned source/toolchain inputs and exposes its exact result through the OCI
+digest.
 
 The candidate reference is retained as an immutable audit alias after its
 temporary publication use (`candidate-${GITHUB_SHA}`). GHCR deletion is scoped
@@ -179,17 +175,15 @@ scripts/verify-release.sh local path/to/release.oci.tar
 ```
 
 After a separately authorized publication, verify its exact GHCR subject,
-stable tag mapping, registry evidence, GitHub attestation, and workflow-bound
-signature:
+stable tag mapping, labels, platform, and workflow-bound signature:
 
 ```sh
 scripts/verify-release.sh remote ghcr.io/araihu/dex@sha256:...
 ```
 
 Remote mode is intentionally deferred until an image exists. It is read-only
-but requires Docker Buildx, `jq`, Python, Cosign, GitHub CLI, registry access,
-and GitHub attestation access; it never logs in, pushes, signs, tags, or mutates
-registry or GitHub state itself.
+but requires Docker Buildx, `jq`, Python, Cosign, and registry access; it never
+logs in, pushes, signs, tags, or mutates registry or GitHub state itself.
 
 Rollback verification runs `test/rollback.spec.ts` with `DEX_FRONTEND_DIR=` on
 the derived image and on the exact pinned upstream image before any homelab

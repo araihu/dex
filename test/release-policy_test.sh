@@ -43,11 +43,10 @@ expected_permissions = {
   'contents' => 'read',
   'packages' => 'write',
   'id-token' => 'write',
-  'attestations' => 'write',
 }
 abort 'release permissions differ from the exact allowlist' unless workflow['permissions'] == expected_permissions
 abort 'release image is not the sole approved GHCR repository' unless workflow.dig('env', 'IMAGE') == 'ghcr.io/araihu/dex'
-abort 'release platforms differ from the exact pair' unless workflow.dig('env', 'PLATFORMS') == 'linux/amd64,linux/arm64'
+abort 'release platform must be linux/amd64 only' unless workflow.dig('env', 'PLATFORM') == 'linux/amd64'
 
 jobs = workflow['jobs']
 abort 'release workflow must have exactly one job' unless jobs.is_a?(Hash) && jobs.keys == ['release']
@@ -100,31 +99,22 @@ abort 'release metadata must not use wall-clock date' if metadata_run.match?(/(^
 trust = step(steps, 'trust')
 abort 'locked upstream trust verification missing' unless trust['run'].to_s.include?('scripts/update-lock.sh --verify-lock')
 
-verify_local = step(steps, 'verify_local')
-abort 'local OCI verification missing' unless verify_local['run'].to_s.include?('scripts/verify-release.sh local "$RUNNER_TEMP/release.oci.tar"')
-
-multiarch = step(steps, 'multiarch')
-multiarch_run = multiarch['run'].to_s
-abort 'pre-login multi-architecture OCI gate missing' unless multiarch_run.include?('--platform "$PLATFORMS"') && multiarch_run.include?('type=oci,dest=$OCI_ARCHIVE') && multiarch_run.include?('scripts/verify-release.sh local "$OCI_ARCHIVE"')
-abort 'pre-login multi-architecture gate must carry provenance and SBOM' unless multiarch_run.include?('--provenance=mode=max') && multiarch_run.include?('--sbom=true')
+local_image = step(steps, 'local_image')
+local_image_run = local_image['run'].to_s
+abort 'local acceptance image must be linux/amd64 only' unless local_image_run.include?('--platform "$PLATFORM"') && local_image_run.include?('--load')
+abort 'release workflow must not install QEMU or build arm64' if source.include?('setup-qemu-action') || source.include?('linux/arm64')
 
 scan = step(steps, 'scan')
 abort 'vulnerability scan action missing' unless scan['uses'].start_with?('aquasecurity/trivy-action@')
 abort 'Trivy version must be deterministic' unless scan.dig('with', 'version') == 'v0.74.0'
-abort 'amd64 scan must target the exact published platform manifest' unless scan.dig('with', 'image-ref') == '${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}'
+abort 'scan must target the exact published manifest' unless scan.dig('with', 'image-ref') == '${{ env.IMAGE }}@${{ steps.candidate.outputs.digest }}'
 abort 'scan report must be retained as SARIF' unless scan.dig('with', 'format') == 'sarif' && scan.dig('with', 'output') == 'release-evidence/vulnerability-report-amd64.sarif'
 abort 'Trivy gate must fail on selected vulnerabilities' unless scan.dig('with', 'exit-code') == '1'
 abort 'Trivy severity policy must be HIGH,CRITICAL' unless scan.dig('with', 'severity') == 'HIGH,CRITICAL'
 abort 'Trivy SARIF output must be limited to selected severities' unless scan.dig('with', 'limit-severities-for-sarif') == true
 abort 'Trivy ignore-unfixed policy must be explicit' unless scan.dig('with', 'ignore-unfixed') == true
 
-scan_arm64 = step(steps, 'scan_arm64')
-abort 'arm64 vulnerability scan action missing' unless scan_arm64['uses'] == scan['uses']
-abort 'arm64 scan must target the exact published platform manifest' unless scan_arm64.dig('with', 'image-ref') == '${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}'
-abort 'arm64 scan report must be retained as SARIF' unless scan_arm64.dig('with', 'format') == 'sarif' && scan_arm64.dig('with', 'output') == 'release-evidence/vulnerability-report-arm64.sarif'
-%w[version exit-code ignore-unfixed severity limit-severities-for-sarif].each do |key|
-  abort "arm64 scan #{key} policy mismatch" unless scan_arm64.dig('with', key) == scan.dig('with', key)
-end
+abort 'arm64 scan is forbidden' if steps.any? { |candidate| candidate['id'] == 'scan_arm64' }
 
 prepare_evidence = step(steps, 'prepare_evidence')
 abort 'release evidence directory must be created before Trivy' unless prepare_evidence['run'].to_s.include?('mkdir -p release-evidence')
@@ -137,38 +127,29 @@ abort 'registry login must use the job-scoped token' unless login.dig('with', 'p
 
 publish = step(steps, 'publish')
 abort 'publish action missing' unless publish['uses'].start_with?('docker/build-push-action@')
-abort 'stable tags must not be published by the candidate build' if publish.dig('with', 'tags')
-abort 'candidate build must not use the stable push shorthand' if publish.dig('with', 'push')
 expected_publish = {
   'context' => '.',
-  'platforms' => '${{ env.PLATFORMS }}',
+  'platforms' => '${{ env.PLATFORM }}',
   'labels' => '${{ steps.release.outputs.labels }}',
   'build-args' => 'SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}',
-  'provenance' => 'mode=max',
-  'sbom' => true,
+  'tags' => '${{ steps.release.outputs.candidate }}',
+  'push' => true,
+  'provenance' => false,
+  'sbom' => false,
 }
 expected_publish.each do |key, value|
   abort "publish #{key} policy mismatch" unless publish.dig('with', key) == value
 end
-outputs = publish.dig('with', 'outputs').to_s
-abort 'candidate build must export the locally verified OCI archive' unless outputs.include?('type=oci,dest=${{ runner.temp }}/release.oci.tar')
-abort 'candidate build must push only its temporary candidate reference' unless outputs.include?('type=registry,name=${{ steps.release.outputs.candidate }},push=true')
-abort 'candidate build must carry exact platform/provenance settings' unless publish.dig('with', 'platforms') == '${{ env.PLATFORMS }}' && publish.dig('with', 'provenance') == 'mode=max' && publish.dig('with', 'sbom') == true
 
 candidate = step(steps, 'candidate')
 candidate_run = candidate['run'].to_s
-abort 'candidate step must verify the local OCI root blob' unless candidate_run.include?('tar -xOf "$OCI_ARCHIVE" index.json') && candidate_run.include?('root_digest') && candidate_run.include?('blob_digest') && candidate_run.include?('local_index_json')
-abort 'candidate digest must be the immutable registry root' unless candidate_run.include?('remote_digest') && candidate_run.include?('echo "digest=$remote_digest"')
-abort 'candidate root must contain exactly linux/amd64 and linux/arm64 images' unless candidate_run.include?('remote platform set mismatch') && candidate_run.include?('($images | length == 2)') && candidate_run.include?('[["linux", "amd64"], ["linux", "arm64"]]')
-abort 'candidate step must bind exact registry platforms to the verified local OCI archive' unless candidate_run.include?('imagetools inspect --raw "$IMAGE@$remote_digest"') && candidate_run.include?('candidate-index.json') && candidate_run.include?('for architecture in amd64 arm64') && candidate_run.include?('local_platform_digest') && candidate_run.include?('platform_digest') && candidate_run.include?('platform_digest" = "$local_platform_digest"') && candidate_run.include?('${architecture}_digest=$platform_digest')
+abort 'candidate digest must come from the published build output' unless candidate.dig('env', 'DIGEST') == '${{ steps.publish.outputs.digest }}'
+abort 'candidate tag must resolve to the published immutable digest' unless candidate_run.include?('remote_digest') && candidate_run.include?('remote_digest" = "$DIGEST"')
+abort 'candidate blob must be read by immutable digest and verified' unless candidate_run.include?('imagetools inspect --raw "$IMAGE@$DIGEST"') && candidate_run.include?('blob_digest') && candidate_run.include?('blob_digest" = "$DIGEST"') && candidate_run.include?('application/vnd.oci.image.manifest.v1+json')
+abort 'candidate digest output missing' unless candidate_run.include?('echo "digest=$DIGEST"')
 abort 'candidate platform index must not be read through its mutable tag' if candidate_run.include?('imagetools inspect --raw "$CANDIDATE"')
 
-attest = step(steps, 'attest')
-abort 'GitHub build provenance attestation missing' unless attest['uses'].start_with?('actions/attest-build-provenance@')
-abort 'attestation subject name mismatch' unless attest.dig('with', 'subject-name') == '${{ env.IMAGE }}'
-abort 'attestation subject digest mismatch' unless attest.dig('with', 'subject-digest') == '${{ steps.candidate.outputs.digest }}'
-abort 'attestation must be pushed with the image' unless attest.dig('with', 'push-to-registry') == true
-abort 'artifact metadata permission expansion is forbidden' unless attest.dig('with', 'create-storage-record') == false
+abort 'release workflow must not create SBOM or provenance attestations' if steps.any? { |candidate| candidate['id'] == 'attest' }
 
 sign = step(steps, 'sign')
 abort 'keyless digest signing missing' unless sign['run'].to_s.include?('cosign sign --yes "$IMAGE@$DIGEST"')
@@ -182,7 +163,7 @@ abort 'immutable pre-promotion verification mode missing' unless verifier_source
 
 promote = step(steps, 'promote')
 promote_run = promote['run'].to_s
-abort 'stable tags must be promoted from the verified candidate digest' unless promote_run.include?('docker buildx imagetools create --tag') && promote_run.include?('$IMAGE@$DIGEST')
+abort 'stable tags must carbon-copy the verified candidate digest' unless promote_run.include?('docker buildx imagetools create --prefer-index=false --tag') && promote_run.include?('$IMAGE@$DIGEST')
 
 verify_aliases = step(steps, 'verify_aliases')
 abort 'stable alias verification missing' unless verify_aliases['run'].to_s.include?('scripts/verify-release.sh remote "$IMAGE@$DIGEST"')
@@ -191,8 +172,8 @@ evidence = step(steps, 'evidence')
 evidence_run = evidence['run'].to_s
 abort 'release index evidence missing' unless evidence_run.include?('release-manifest.json')
 abort 'release manifest checksum missing' unless evidence_run.include?('release-manifest.json.sha256')
-abort 'release SBOM evidence missing' unless evidence_run.include?('sbom.spdx.json')
-abort 'release provenance evidence missing' unless evidence_run.include?('provenance.slsa.json')
+abort 'release evidence must retain the vulnerability report' unless evidence_run.include?('vulnerability-report-amd64.sarif')
+abort 'release evidence must not require SBOM or provenance' if evidence_run.match?(/sbom|provenance|attestation/i)
 abort 'release evidence must fail closed on missing files' unless evidence_run.include?('test -s "$evidence_file"')
 
 upload = step(steps, 'upload')
@@ -203,18 +184,13 @@ end
 abort 'release evidence upload must fail on missing files' unless upload.dig('with', 'if-no-files-found') == 'error'
 
 ids = steps.map { |candidate| candidate['id'] }.compact
-%w[trust multiarch].each do |id|
-  abort "#{id} must run before registry login" unless ids.index(id) < ids.index('login')
-end
+abort 'trust verification must run before registry login' unless ids.index('trust') < ids.index('login')
 abort 'release evidence directory must be prepared before Trivy scan' unless ids.index('prepare_evidence') < ids.index('scan')
-abort 'amd64 scan must precede arm64 scan' unless ids.index('scan') < ids.index('scan_arm64')
-abort 'exact candidate must be published and resolved before Trivy scans' unless ids.index('candidate') < ids.index('scan')
-abort 'both platform scans must pass before attestation' unless ids.index('scan_arm64') < ids.index('attest')
-%w[attest sign verify_candidate evidence upload promote verify_aliases].each do |id|
+abort 'exact candidate must be published and resolved before Trivy scan' unless ids.index('candidate') < ids.index('scan')
+%w[sign verify_candidate evidence upload promote verify_aliases].each do |id|
   abort "#{id} must run after publication" unless ids.index(id) > ids.index('publish')
 end
-abort 'candidate must be resolved before attestation' unless ids.index('candidate') < ids.index('attest')
-abort 'local candidate must be verified before its digest is resolved' unless ids.index('verify_local') < ids.index('candidate')
+abort 'scan must pass before signing' unless ids.index('scan') < ids.index('sign')
 abort 'candidate must be verified before stable promotion' unless ids.index('verify_candidate') < ids.index('promote')
 abort 'release evidence must be collected before stable promotion' unless ids.index('evidence') < ids.index('promote')
 abort 'release evidence must be uploaded before stable promotion' unless ids.index('upload') < ids.index('promote')
@@ -267,29 +243,27 @@ assert_workflow_rejected() {
 check_policy "$workflow" "$dockerfile"
 assert_workflow_rejected trigger "'v[0-9]+.[0-9]+.[0-9]+'" "'*'"
 assert_workflow_rejected pull_request 'on:\n  push:' 'on:\n  pull_request:\n  push:'
-assert_workflow_rejected platform 'linux/amd64,linux/arm64' 'linux/amd64,linux/arm64,linux/s390x'
+assert_workflow_rejected platform 'PLATFORM: linux/amd64' 'PLATFORM: linux/arm64'
 assert_workflow_rejected permission 'contents: read' 'contents: write'
 assert_workflow_rejected action_pin 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1' 'actions/checkout@v7 # v7.0.1'
 assert_workflow_rejected image 'IMAGE: ghcr.io/araihu/dex' 'IMAGE: ghcr.io/araihu/dex-other'
 assert_workflow_rejected edge ':latest' ':edge'
-assert_workflow_rejected provenance 'provenance: mode=max' 'provenance: false'
-assert_workflow_rejected sbom 'sbom: true' 'sbom: false'
+assert_workflow_rejected provenance 'provenance: false' 'provenance: true'
+assert_workflow_rejected sbom 'sbom: false' 'sbom: true'
 assert_workflow_rejected wall_clock_created 'git show -s --format=%ct "$GITHUB_SHA"' 'date -u +%s'
 assert_workflow_rejected trivy_exit "exit-code: '1'" "exit-code: '0'"
 assert_workflow_rejected trivy_severity 'severity: HIGH,CRITICAL' 'severity: LOW'
 assert_workflow_rejected trivy_sarif_severity 'limit-severities-for-sarif: true' 'limit-severities-for-sarif: false'
 assert_workflow_rejected trivy_ignore_unfixed 'ignore-unfixed: true' 'ignore-unfixed: false'
-assert_workflow_rejected trivy_amd64_subject 'image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}' 'image-ref: araihu-dex-release:${{ github.sha }}'
-assert_workflow_rejected trivy_arm64_subject 'image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}' 'image-ref: araihu-dex-release:${{ github.sha }}-arm64'
-assert_workflow_rejected candidate_index_subject 'imagetools inspect --raw "$IMAGE@$remote_digest"' 'imagetools inspect --raw "$CANDIDATE"'
-assert_workflow_rejected candidate_platform_set '($images | length == 2)' 'true'
-assert_workflow_rejected candidate_platform_binding '[[ "$platform_digest" = "$local_platform_digest" ]]' 'true # platform binding omitted'
+assert_workflow_rejected trivy_subject 'image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.digest }}' 'image-ref: araihu-dex-release:${{ github.sha }}'
+assert_workflow_rejected candidate_index_subject 'imagetools inspect --raw "$IMAGE@$DIGEST"' 'imagetools inspect --raw "$CANDIDATE"'
+assert_workflow_rejected candidate_tag_binding '[[ "$remote_digest" = "$DIGEST" ]]' 'true # tag binding omitted'
+assert_workflow_rejected candidate_blob_binding '[[ "$blob_digest" = "$DIGEST" ]]' 'true # blob binding omitted'
 assert_workflow_rejected license_label 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause' 'Apache-2.0 AND MIT AND OFL-1.1'
 assert_workflow_rejected evidence_directory 'mkdir -p release-evidence' 'true # evidence directory omitted'
-assert_workflow_rejected multiarch_platform '--platform "$PLATFORMS"' '--platform linux/amd64'
-assert_workflow_rejected multiarch_verify 'scripts/verify-release.sh local "$OCI_ARCHIVE"' 'true # multiarch verification omitted'
 assert_workflow_rejected reproducible_build_arg 'build-args: SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}' 'build-args: SOURCE_DATE_EPOCH=0'
 assert_workflow_rejected signing 'cosign sign --yes "$IMAGE@$DIGEST"' 'true # signature removed'
+assert_workflow_rejected promotion_copy 'imagetools create --prefer-index=false --tag' 'imagetools create --tag'
 assert_workflow_rejected verification 'scripts/verify-release.sh remote "$IMAGE@$DIGEST"' 'true # verification removed'
 
 mutable_dockerfile=$state/Dockerfile.mutable
@@ -585,39 +559,22 @@ for mutation in platform foreign_os label frontend evidence attestation_type att
 	fi
 done
 
-make_remote_index() {
+make_remote_manifest() {
 	output=$1
-	extra_os=$2
-	python3 - "$output" "$extra_os" <<'PY'
+	python3 - "$output" <<'PY'
 import json
 import pathlib
 import sys
 
-manifests = [
-    {
-        'mediaType': 'application/vnd.oci.image.manifest.v1+json',
-        'digest': 'sha256:' + 'a' * 64,
-        'size': 1,
-        'platform': {'os': 'linux', 'architecture': 'amd64'},
-    },
-    {
-        'mediaType': 'application/vnd.oci.image.manifest.v1+json',
-        'digest': 'sha256:' + 'b' * 64,
-        'size': 1,
-        'platform': {'os': 'linux', 'architecture': 'arm64'},
-    },
-]
-if sys.argv[2] == 'foreign_os':
-    manifests.append({
-        'mediaType': 'application/vnd.oci.image.manifest.v1+json',
-        'digest': 'sha256:' + 'c' * 64,
-        'size': 1,
-        'platform': {'os': 'windows', 'architecture': 'amd64'},
-    })
 pathlib.Path(sys.argv[1]).write_text(json.dumps({
     'schemaVersion': 2,
-    'mediaType': 'application/vnd.oci.image.index.v1+json',
-    'manifests': manifests,
+    'mediaType': 'application/vnd.oci.image.manifest.v1+json',
+    'config': {
+        'mediaType': 'application/vnd.oci.image.config.v1+json',
+        'digest': 'sha256:' + 'a' * 64,
+        'size': 1,
+    },
+    'layers': [],
 }, separators=(',', ':'), sort_keys=True))
 PY
 }
@@ -628,16 +585,15 @@ cat > "$state/remote-bin/docker" <<'EOF'
 set -eu
 case "$*" in
 	*' --raw '*) cat "$REMOTE_INDEX" ;;
-	*'.SBOM'*) printf '%s\n' '{"SPDX":{"SPDXID":"SPDXRef-DOCUMENT"}}' ;;
-	*'.Provenance'*) printf '%s\n' '{"SLSA":{"buildType":"https://mobyproject.org/buildkit@v1"}}' ;;
 	*'.Image'*)
 		jq -cn \
+			--arg os "$REMOTE_OS" \
 			--arg revision "$REMOTE_REVISION" \
 			--arg upstream_revision "$REMOTE_UPSTREAM_REVISION" \
 			--arg upstream_digest "$REMOTE_UPSTREAM_DIGEST" \
 			--arg goshtoso "$REMOTE_GOSHTOSO_VERSION" \
 			--arg assets "$REMOTE_ASSETS_VERSION" \
-			'{config:{Labels:{
+			'{os:$os,architecture:"amd64",config:{Labels:{
 				"org.opencontainers.image.created":"2026-08-25T12:00:00Z",
 				"org.opencontainers.image.revision":$revision,
 				"org.opencontainers.image.version":"v1.2.3",
@@ -661,16 +617,7 @@ case "$*" in
 	*) exit 1 ;;
 esac
 EOF
-cat > "$state/remote-bin/gh" <<'EOF'
-#!/bin/sh
-set -eu
-identity=https://github.com/araihu/dex/.github/workflows/release.yml@refs/tags/v1.2.3
-case "$*" in
-	*'attestation verify oci://ghcr.io/araihu/dex@sha256:'*'--repo araihu/dex'*"--cert-identity $identity"*'--source-ref refs/tags/v1.2.3'*"--source-digest $REMOTE_REVISION"*'--predicate-type https://slsa.dev/provenance/v1'*) ;;
-	*) exit 1 ;;
-esac
-EOF
-chmod +x "$state/remote-bin/docker" "$state/remote-bin/cosign" "$state/remote-bin/gh"
+chmod +x "$state/remote-bin/docker" "$state/remote-bin/cosign"
 
 remote_revision=0123456789abcdef0123456789abcdef01234567
 remote_upstream_revision=$(sed -n 's/^DEX_COMMIT=//p' "$repo/versions.env")
@@ -681,7 +628,9 @@ remote_assets_version=$(sed -n 's/^ARAIHU_ASSETS_VERSION=//p' "$repo/versions.en
 run_remote_fixture() {
 	index=$1
 	subject=${2:-ghcr.io/araihu/dex:v1.2.3}
+	os=${3:-linux}
 	REMOTE_INDEX=$index \
+		REMOTE_OS=$os \
 		REMOTE_REVISION=$remote_revision \
 		REMOTE_UPSTREAM_REVISION=$remote_upstream_revision \
 		REMOTE_UPSTREAM_DIGEST=$remote_upstream_digest \
@@ -691,14 +640,13 @@ run_remote_fixture() {
 		"$verifier" remote "$subject"
 }
 
-make_remote_index "$state/remote-index.json" good
+make_remote_manifest "$state/remote-index.json"
 run_remote_fixture "$state/remote-index.json" >/dev/null
 run_remote_fixture "$state/remote-index.json" ghcr.io/araihu/dex:candidate-0123456789abcdef0123456789abcdef01234567 >/dev/null
 if run_remote_fixture "$state/remote-index.json" ghcr.io/araihu/dex:candidate-not-a-commit >/dev/null 2>&1; then
 	die 'remote verifier accepted a malformed candidate tag'
 fi
-make_remote_index "$state/remote-foreign-os-index.json" foreign_os
-if run_remote_fixture "$state/remote-foreign-os-index.json" >/dev/null 2>&1; then
+if run_remote_fixture "$state/remote-index.json" ghcr.io/araihu/dex:v1.2.3 windows >/dev/null 2>&1; then
 	die 'remote verifier accepted a foreign platform mutation'
 fi
 

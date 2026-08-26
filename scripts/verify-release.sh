@@ -380,7 +380,6 @@ PY
 		command -v jq >/dev/null 2>&1 || die 'jq is required for remote verification'
 		command -v python3 >/dev/null 2>&1 || die 'python3 is required for remote verification'
 		command -v cosign >/dev/null 2>&1 || die 'cosign is required for remote verification'
-		command -v gh >/dev/null 2>&1 || die 'GitHub CLI is required for remote verification'
 		if [[ "$mode" == remote-candidate ]]; then
 			[[ "$subject" =~ ^ghcr\.io/araihu/dex@sha256:[0-9a-f]{64}$ ]] ||
 				die 'remote candidate must be an exact ghcr.io/araihu/dex digest reference'
@@ -406,39 +405,28 @@ PY
 )
 		[[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'published subject digest is invalid'
 
-		jq -e '
-			[.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")] as $images |
-			($images | length == 2) and
-			([$images[] | select(.mediaType == "application/vnd.oci.image.manifest.v1+json")] | length == 2) and
-			([$images[] | [.platform.os, .platform.architecture]] | sort == [["linux", "amd64"], ["linux", "arm64"]])
-		' "$state/index.json" >/dev/null || die 'published platforms must be exactly linux/amd64 and linux/arm64'
+		jq -e '.mediaType == "application/vnd.oci.image.manifest.v1+json"' "$state/index.json" >/dev/null ||
+			die 'published subject must be one OCI image manifest'
+		docker buildx imagetools inspect "$image@$digest" --format '{{ json .Image }}' > "$state/image.json"
+		labels=$state/image.json
+		[[ $(jq -r '.os // empty' "$labels") == linux && $(jq -r '.architecture // empty' "$labels") == amd64 ]] ||
+			die 'published image must be linux/amd64'
+		[[ $(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$labels") == https://github.com/araihu/dex ]] ||
+			die 'source label mismatch'
+		[[ $(jq -r '.config.Labels["org.opencontainers.image.licenses"] // empty' "$labels") == 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause' ]] ||
+			die 'license label mismatch'
+		[[ $(jq -r '.config.Labels["io.araihu.dex.upstream.revision"] // empty' "$labels") == "$dex_commit" ]] ||
+			die 'upstream revision label mismatch'
+		[[ $(jq -r '.config.Labels["io.araihu.dex.upstream.digest"] // empty' "$labels") == "$upstream_digest" ]] ||
+			die 'upstream digest label mismatch'
+		[[ $(jq -r '.config.Labels["io.araihu.dex.goshtoso.version"] // empty' "$labels") == "$goshtoso_version" ]] ||
+			die 'Goshtoso label mismatch'
+		[[ $(jq -r '.config.Labels["io.araihu.dex.assets.version"] // empty' "$labels") == "$assets_version" ]] ||
+			die 'Assets label mismatch'
 
-		jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture != "unknown") | [.platform.architecture, .digest] | @tsv' \
-			"$state/index.json" > "$state/platforms"
-		while IFS=$'\t' read -r architecture platform_digest; do
-			docker buildx imagetools inspect "$image@$platform_digest" --format '{{ json .Image }}' > "$state/$architecture-image.json"
-		done < "$state/platforms"
-
-		for architecture in amd64 arm64; do
-			labels=$state/$architecture-image.json
-			[[ -s "$labels" ]] || die "linux/$architecture image config missing"
-			[[ $(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$labels") == https://github.com/araihu/dex ]] ||
-				die "linux/$architecture source label mismatch"
-			[[ $(jq -r '.config.Labels["org.opencontainers.image.licenses"] // empty' "$labels") == 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause' ]] ||
-				die "linux/$architecture license label mismatch"
-			[[ $(jq -r '.config.Labels["io.araihu.dex.upstream.revision"] // empty' "$labels") == "$dex_commit" ]] ||
-				die "linux/$architecture upstream revision label mismatch"
-			[[ $(jq -r '.config.Labels["io.araihu.dex.upstream.digest"] // empty' "$labels") == "$upstream_digest" ]] ||
-				die "linux/$architecture upstream digest label mismatch"
-			[[ $(jq -r '.config.Labels["io.araihu.dex.goshtoso.version"] // empty' "$labels") == "$goshtoso_version" ]] ||
-				die "linux/$architecture Goshtoso label mismatch"
-			[[ $(jq -r '.config.Labels["io.araihu.dex.assets.version"] // empty' "$labels") == "$assets_version" ]] ||
-				die "linux/$architecture Assets label mismatch"
-		done
-
-		revision=$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$state/amd64-image.json")
-		version=$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' "$state/amd64-image.json")
-		created=$(jq -r '.config.Labels["org.opencontainers.image.created"] // empty' "$state/amd64-image.json")
+		revision=$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$labels")
+		version=$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' "$labels")
+		created=$(jq -r '.config.Labels["org.opencontainers.image.created"] // empty' "$labels")
 		[[ "$revision" =~ ^[0-9a-f]{40}$ ]] || die 'published AraiHu revision label is invalid'
 		[[ "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die 'published version is not stable vX.Y.Z'
 		major=${BASH_REMATCH[1]}
@@ -454,16 +442,6 @@ try:
 except ValueError:
     raise SystemExit('verify-release: published creation label is not RFC3339 UTC')
 PY
-
-		for architecture in amd64 arm64; do
-			labels=$state/$architecture-image.json
-			[[ $(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$labels") == "$revision" ]] ||
-				die 'per-platform revision labels differ'
-			[[ $(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' "$labels") == "$version" ]] ||
-				die 'per-platform version labels differ'
-			[[ $(jq -r '.config.Labels["org.opencontainers.image.created"] // empty' "$labels") == "$created" ]] ||
-				die 'per-platform creation labels differ'
-		done
 
 	expected_refs=(
 			"$image:$version"
@@ -498,23 +476,10 @@ PY
 			done
 		fi
 
-		docker buildx imagetools inspect "$image@$digest" --format '{{ json .SBOM }}' > "$state/sbom.json"
-		jq -e '.. | objects | select(.SPDXID? == "SPDXRef-DOCUMENT")' "$state/sbom.json" >/dev/null ||
-			die 'published SPDX JSON SBOM missing'
-		docker buildx imagetools inspect "$image@$digest" --format '{{ json .Provenance }}' > "$state/provenance.json"
-		jq -e '.. | objects | select(.buildType? == "https://mobyproject.org/buildkit@v1")' "$state/provenance.json" >/dev/null ||
-			die 'published BuildKit provenance missing'
-
 		identity="https://github.com/araihu/dex/.github/workflows/release.yml@refs/tags/$version"
 		cosign verify "$image@$digest" \
 			--certificate-identity "$identity" \
 			--certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
-		gh attestation verify "oci://$image@$digest" \
-			--repo araihu/dex \
-			--cert-identity "$identity" \
-			--source-ref "refs/tags/$version" \
-			--source-digest "$revision" \
-			--predicate-type https://slsa.dev/provenance/v1 >/dev/null
 
 		printf '%s\n' "verify-release: remote ok: $image@$digest"
 		;;

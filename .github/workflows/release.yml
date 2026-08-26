@@ -9,11 +9,10 @@ permissions:
   contents: read
   packages: write
   id-token: write
-  attestations: write
 
 env:
   IMAGE: ghcr.io/araihu/dex
-  PLATFORMS: linux/amd64,linux/arm64
+  PLATFORM: linux/amd64
 
 jobs:
   release:
@@ -104,9 +103,6 @@ jobs:
         with:
           go-version: 1.27.x
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
@@ -140,10 +136,12 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Build local architecture acceptance images
+      - name: Build local acceptance image
+        id: local_image
         env:
           LABELS: ${{ steps.release.outputs.labels }}
           LOCAL_IMAGE: araihu-dex-release:${{ github.sha }}
+          PLATFORM: ${{ env.PLATFORM }}
         shell: bash
         run: |
           set -euo pipefail
@@ -152,16 +150,9 @@ jobs:
             test -z "$label" || label_args+=(--label "$label")
           done <<< "$LABELS"
           docker buildx build \
-            --platform linux/amd64 \
+            --platform "$PLATFORM" \
             --load \
             --tag "$LOCAL_IMAGE" \
-            --build-arg "SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}" \
-            "${label_args[@]}" \
-            .
-          docker buildx build \
-            --platform linux/arm64 \
-            --load \
-            --tag "$LOCAL_IMAGE-arm64" \
             --build-arg "SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}" \
             "${label_args[@]}" \
             .
@@ -171,31 +162,7 @@ jobs:
           LOCAL_IMAGE: araihu-dex-release:${{ github.sha }}
         run: |
           sh test/image-overlay_test.sh "$LOCAL_IMAGE"
-          sh test/image-overlay_test.sh "$LOCAL_IMAGE-arm64"
           scripts/test-image.sh "$LOCAL_IMAGE"
-
-      - name: Build and verify local multi-architecture OCI
-        id: multiarch
-        env:
-          LABELS: ${{ steps.release.outputs.labels }}
-          PLATFORMS: ${{ env.PLATFORMS }}
-          OCI_ARCHIVE: ${{ runner.temp }}/preflight.oci.tar
-        shell: bash
-        run: |
-          set -euo pipefail
-          label_args=()
-          while IFS= read -r label; do
-            test -z "$label" || label_args+=(--label "$label")
-          done <<< "$LABELS"
-          docker buildx build \
-            --platform "$PLATFORMS" \
-            --output "type=oci,dest=$OCI_ARCHIVE" \
-            --provenance=mode=max \
-            --sbom=true \
-            --build-arg "SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}" \
-            "${label_args[@]}" \
-            .
-          scripts/verify-release.sh local "$OCI_ARCHIVE"
 
       - name: Prepare release evidence directory
         id: prepare_evidence
@@ -209,96 +176,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Build and publish exact OCI candidate
+      - name: Build and publish amd64 candidate
         id: publish
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          platforms: ${{ env.PLATFORMS }}
+          platforms: ${{ env.PLATFORM }}
           labels: ${{ steps.release.outputs.labels }}
           build-args: SOURCE_DATE_EPOCH=${{ steps.release.outputs.source_date_epoch }}
-          outputs: |
-            type=oci,dest=${{ runner.temp }}/release.oci.tar
-            type=registry,name=${{ steps.release.outputs.candidate }},push=true
-          provenance: mode=max
-          sbom: true
-
-      - name: Verify local OCI candidate
-        id: verify_local
-        run: scripts/verify-release.sh local "$RUNNER_TEMP/release.oci.tar"
+          tags: ${{ steps.release.outputs.candidate }}
+          push: true
+          provenance: false
+          sbom: false
 
       - name: Resolve candidate digest
         id: candidate
         env:
           CANDIDATE: ${{ steps.release.outputs.candidate }}
-          OCI_ARCHIVE: ${{ runner.temp }}/release.oci.tar
+          DIGEST: ${{ steps.publish.outputs.digest }}
         shell: bash
         run: |
           set -euo pipefail
-          index_json=$(tar -xOf "$OCI_ARCHIVE" index.json)
-          root_digest=$(printf '%s\n' "$index_json" | jq -r '
-            if (.manifests | length) == 1
-              and .manifests[0].mediaType == "application/vnd.oci.image.index.v1+json"
-            then .manifests[0].digest
-            else empty
-            end
-          ')
-          if [[ -n "$root_digest" ]]; then
-            [[ "$root_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            root_hex=${root_digest#sha256:}
-            blob_digest="sha256:$(tar -xOf "$OCI_ARCHIVE" "blobs/sha256/$root_hex" | sha256sum | awk '{print $1}')"
-            local_index_json=$(tar -xOf "$OCI_ARCHIVE" "blobs/sha256/$root_hex")
-            [[ "$blob_digest" = "$root_digest" ]]
-            local_digest=$root_digest
-          else
-            local_index_json=$index_json
-            local_digest="sha256:$(tar -xOf "$OCI_ARCHIVE" index.json | sha256sum | awk '{print $1}')"
-          fi
-          [[ "$local_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           remote_digest=$(docker buildx imagetools inspect "$CANDIDATE" --format '{{json .Manifest}}' | jq -er '.digest')
-          [[ "$remote_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          docker buildx imagetools inspect --raw "$IMAGE@$remote_digest" > "$RUNNER_TEMP/candidate-index.json"
-          jq -e '
-            [.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")] as $images |
-            ($images | length == 2) and
-            ([$images[] | select(.mediaType == "application/vnd.oci.image.manifest.v1+json")] | length == 2) and
-            ([$images[] | [.platform.os, .platform.architecture]] | sort == [["linux", "amd64"], ["linux", "arm64"]])
-          ' "$RUNNER_TEMP/candidate-index.json" >/dev/null || {
-            echo "remote platform set mismatch" >&2
-            exit 1
-          }
-          for architecture in amd64 arm64; do
-            local_platform_digest=$(printf '%s\n' "$local_index_json" | jq -er --arg architecture "$architecture" '
-              [.manifests[] | select(
-                .platform.os == "linux" and
-                .platform.architecture == $architecture and
-                (.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"
-              )] |
-              if length == 1 then .[0].digest else error("local platform manifest count mismatch") end
-            ')
-            platform_digest=$(jq -er --arg architecture "$architecture" '
-              [.manifests[] | select(
-                .platform.os == "linux" and
-                .platform.architecture == $architecture and
-                (.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"
-              )] |
-              if length == 1 then .[0].digest else error("platform manifest count mismatch") end
-            ' "$RUNNER_TEMP/candidate-index.json")
-            [[ "$local_platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            [[ "$platform_digest" = "$local_platform_digest" ]] || {
-              echo "published linux/$architecture manifest differs from locally verified OCI archive: $platform_digest != $local_platform_digest" >&2
-              exit 1
-            }
-            echo "${architecture}_digest=$platform_digest" >> "$GITHUB_OUTPUT"
-          done
-          echo "digest=$remote_digest" >> "$GITHUB_OUTPUT"
+          [[ "$remote_digest" = "$DIGEST" ]]
+          docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" > "$RUNNER_TEMP/candidate-manifest.json"
+          jq -e '.mediaType == "application/vnd.oci.image.manifest.v1+json"' "$RUNNER_TEMP/candidate-manifest.json" >/dev/null
+          blob_digest="sha256:$(sha256sum "$RUNNER_TEMP/candidate-manifest.json" | awk '{print $1}')"
+          [[ "$blob_digest" = "$DIGEST" ]]
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Scan exact amd64 candidate manifest
+      - name: Scan exact candidate manifest
         id: scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}
+          image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.digest }}
           version: v0.74.0
           format: sarif
           output: release-evidence/vulnerability-report-amd64.sarif
@@ -306,28 +218,6 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           limit-severities-for-sarif: true
-
-      - name: Scan exact arm64 candidate manifest
-        id: scan_arm64
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}
-          version: v0.74.0
-          format: sarif
-          output: release-evidence/vulnerability-report-arm64.sarif
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          limit-severities-for-sarif: true
-
-      - name: Create GitHub build provenance attestation
-        id: attest
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.candidate.outputs.digest }}
-          push-to-registry: true
-          create-storage-record: false
 
       - name: Sign candidate digest keylessly
         id: sign
@@ -341,7 +231,6 @@ jobs:
         env:
           IMAGE: ${{ env.IMAGE }}
           DIGEST: ${{ steps.candidate.outputs.digest }}
-          GH_TOKEN: ${{ github.token }}
         run: scripts/verify-release.sh remote-candidate "$IMAGE@$DIGEST"
 
       - name: Collect immutable release evidence
@@ -349,28 +238,18 @@ jobs:
         env:
           IMAGE: ${{ env.IMAGE }}
           DIGEST: ${{ steps.candidate.outputs.digest }}
-          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -euo pipefail
           docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" > release-evidence/release-manifest.json
           sha256sum release-evidence/release-manifest.json > release-evidence/release-manifest.json.sha256
-          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{ json .SBOM }}' |
-            jq . > release-evidence/sbom.spdx.json
-          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{ json .Provenance }}' |
-            jq . > release-evidence/provenance.slsa.json
           cp web/manifest.sha256 release-evidence/frontend-manifest.sha256
           sha256sum release-evidence/frontend-manifest.sha256 > release-evidence/frontend-manifest.sha256.sha256
-          cp "$ATTESTATION_BUNDLE" release-evidence/github-attestation.sigstore.json
           for evidence_file in \
             release-evidence/vulnerability-report-amd64.sarif \
-            release-evidence/vulnerability-report-arm64.sarif \
             release-evidence/release-manifest.json \
             release-evidence/release-manifest.json.sha256 \
-            release-evidence/sbom.spdx.json \
-            release-evidence/provenance.slsa.json \
             release-evidence/frontend-manifest.sha256 \
-            release-evidence/frontend-manifest.sha256.sha256 \
-            release-evidence/github-attestation.sigstore.json; do
+            release-evidence/frontend-manifest.sha256.sha256; do
             test -s "$evidence_file"
           done
 
@@ -400,7 +279,7 @@ jobs:
           set -euo pipefail
           while IFS= read -r tag; do
             test -n "$tag"
-            docker buildx imagetools create --tag "$tag" "$IMAGE@$DIGEST"
+            docker buildx imagetools create --prefer-index=false --tag "$tag" "$IMAGE@$DIGEST"
           done <<< "$TAGS"
 
       - name: Verify promoted stable tags and workflow identity
@@ -408,5 +287,4 @@ jobs:
         env:
           IMAGE: ${{ env.IMAGE }}
           DIGEST: ${{ steps.candidate.outputs.digest }}
-          GH_TOKEN: ${{ github.token }}
         run: scripts/verify-release.sh remote "$IMAGE@$DIGEST"

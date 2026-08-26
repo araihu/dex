@@ -26,7 +26,23 @@ case "$arch" in
 esac
 platform="linux/$arch"
 
-upstream_container=$(docker create --platform "$platform" --entrypoint /bin/true "$upstream")
+upstream_digest=$(
+	docker buildx imagetools inspect "$upstream" --format '{{json .Manifest}}' |
+		jq -er --arg architecture "$arch" '
+			[.manifests[] | select(
+				.platform.os == "linux" and
+				.platform.architecture == $architecture
+			)] |
+			if length == 1 then .[0].digest
+			else error("upstream platform manifest count mismatch")
+			end
+		'
+) || fail "cannot resolve upstream $platform manifest"
+printf '%s\n' "$upstream_digest" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+	fail "invalid upstream $platform manifest digest"
+upstream_platform=${upstream%@*}@$upstream_digest
+
+upstream_container=$(docker create --platform "$platform" --entrypoint /bin/true "$upstream_platform")
 derived_container=$(docker create --platform "$platform" --entrypoint /bin/true "$image")
 mkdir "$tmp/upstream" "$tmp/derived"
 docker export "$upstream_container" | tar -xf - -C "$tmp/upstream"

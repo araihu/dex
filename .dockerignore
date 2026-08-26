@@ -12,6 +12,8 @@
 !web/templates/footer.html
 !web/static/
 !web/static/appearance.js
+!web/static/araihu-lato-latin-400.woff2
+!web/static/araihu-lato-latin-700.woff2
 !web/static/araihu-logo.svg
 !web/static/araihu-styles.css
 !web/static/favicon-32.png
@@ -22,3 +24,5 @@
 !entrypoint.sh
 !LICENSE
 !NOTICE
+!licenses/
+!licenses/Lato-OFL-1.1.txt

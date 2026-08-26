@@ -19,10 +19,15 @@ redistribute those assets as part of their products and release artifacts.
 
 Heroicons used by this overlay are licensed under the MIT License.
 
+Lato webfont files are Copyright 2010-2011 tyPoland Łukasz Dziedzic and
+licensed under the SIL Open Font License 1.1. They are sourced from the exact
+`@fontsource/lato` package version and integrity pinned in `package-lock.json`.
+
 The complete source and third-party notices shipped in a release identify the
 exact released materials included in that artifact.
 
-Release images declare the SPDX license expression `Apache-2.0 AND MIT`. Their
+Release images declare the SPDX license expression
+`Apache-2.0 AND MIT AND OFL-1.1`. Their
 SPDX JSON SBOM, provenance, attestations, and signatures identify the exact
 artifact and included materials; they do not replace this notice or change any
 component's license terms.

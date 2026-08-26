@@ -38,10 +38,13 @@ while IFS= read -r path; do
 		./usr/share/licenses/araihu-dex|\
 		./usr/share/licenses/araihu-dex/LICENSE|\
 		./usr/share/licenses/araihu-dex/NOTICE|\
+		./usr/share/licenses/araihu-dex/Lato-OFL-1.1.txt|\
 		./usr/share/licenses/araihu-dex/assets-NOTICE|\
 		./usr/share/licenses/araihu-dex/Apache-2.0.txt|\
 		./usr/share/licenses/araihu-dex/heroicons-MIT.txt|\
 		./srv/dex/web/static/appearance.js|\
+		./srv/dex/web/static/araihu-lato-latin-400.woff2|\
+		./srv/dex/web/static/araihu-lato-latin-700.woff2|\
 		./srv/dex/web/static/araihu-logo.svg|\
 		./srv/dex/web/static/araihu-styles.css|\
 		./srv/dex/web/static/favicon-32.png|\
@@ -74,6 +77,8 @@ for path in \
 	srv/dex/web/templates/header.html \
 	srv/dex/web/templates/footer.html \
 	srv/dex/web/static/appearance.js \
+	srv/dex/web/static/araihu-lato-latin-400.woff2 \
+	srv/dex/web/static/araihu-lato-latin-700.woff2 \
 	srv/dex/web/static/araihu-logo.svg \
 	srv/dex/web/static/araihu-styles.css \
 	srv/dex/web/static/favicon-32.png \

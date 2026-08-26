@@ -31,7 +31,9 @@ exist before that push.
 
 [`versions.env`](versions.env) is the single source lock. It pins the approved
 Dex commit/archive, Goshtoso module/theme/catalog, AraiHu Assets release and
-member manifest, plus the frontend tool baselines. The POSIX acquisition
+member manifest, plus the frontend tool baselines. `package-lock.json` also
+pins the exact Fontsource Lato package and integrity used for deterministic
+AraiHu-theme typography. The POSIX acquisition
 boundary verifies every checksum before writing the cache:
 
 ```sh
@@ -75,9 +77,10 @@ daemon, OCI files, and local BuildKit caches. It has no registry login, image
 publication, tag, attestation generation, or signing step.
 
 Committed screenshot baselines are canonical Ubuntu/Playwright output used by
-CI. Goshtoso theme font names can resolve to different host-installed fonts on
-macOS, so local macOS screenshots are useful for interactive review but must
-not replace the Linux regression baselines.
+CI. The AraiHu theme's Lato token resolves to two same-origin, OFL-licensed
+WOFF2 files generated from the pinned Fontsource package. This avoids host font
+drift without changing Goshtoso tokens; themes that do not request Lato remain
+untouched.
 
 Verify the locked official Dex image's revision, Cosign identity, and SLSA
 provenance from public registry data, without a GitHub token or update

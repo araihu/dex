@@ -100,6 +100,7 @@ The final stage starts from the exact upstream multi-architecture digest. It add
 
 - shared `header.html` and `footer.html` overrides;
 - generated `static/araihu-styles.css` containing all selected-release Goshtoso themes and the Dex adapter;
+- same-origin Lato regular/bold WOFF2 files pinned through `package-lock.json`, used only when a Goshtoso token requests Lato;
 - same-origin `appearance.js` and runtime-generated `theme-default.js`;
 - optional AraiHu logo/favicon assets and required UI icon assets;
 - a small entrypoint wrapper;

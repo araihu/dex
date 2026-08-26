@@ -27,6 +27,8 @@ zombie\tZombie
 
 const expectedFiles = [
   'static/appearance.js',
+  'static/araihu-lato-latin-400.woff2',
+  'static/araihu-lato-latin-700.woff2',
   'static/araihu-logo.svg',
   'static/araihu-styles.css',
   'static/favicon-32.png',
@@ -53,6 +55,8 @@ test('generation emits only the approved deterministic overlay', async () => {
   ]);
   assert.deepEqual((await readdir(new URL('static/', web))).sort(), [
     'appearance.js',
+    'araihu-lato-latin-400.woff2',
+    'araihu-lato-latin-700.woff2',
     'araihu-logo.svg',
     'araihu-styles.css',
     'favicon-32.png',
@@ -66,6 +70,14 @@ test('generation emits only the approved deterministic overlay', async () => {
   assert.match(
     await bytes('static/araihu-styles.css').then(String),
     /font-family:var\(--font-body,var\(--font-paragraph,sans-serif\)\)/,
+  );
+  assert.match(
+    await bytes('static/araihu-styles.css').then(String),
+    /@font-face\{font-family:Lato;src:url\(\.\/araihu-lato-latin-400\.woff2\)format\("woff2"\);font-style:normal;font-weight:400;font-display:swap\}/,
+  );
+  assert.match(
+    await bytes('static/araihu-styles.css').then(String),
+    /@font-face\{font-family:Lato;src:url\(\.\/araihu-lato-latin-700\.woff2\)format\("woff2"\);font-style:normal;font-weight:700;font-display:swap\}/,
   );
 
   const header = await bytes('templates/header.html').then(String);
@@ -107,6 +119,8 @@ test('generation emits only the approved deterministic overlay', async () => {
 
   const provenance = new Map([
     ['static/appearance.js', 'src/appearance.js'],
+    ['static/araihu-lato-latin-400.woff2', 'node_modules/@fontsource/lato/files/lato-latin-400-normal.woff2'],
+    ['static/araihu-lato-latin-700.woff2', 'node_modules/@fontsource/lato/files/lato-latin-700-normal.woff2'],
     ['static/araihu-logo.svg', '.cache/sources/assets/brand/araihu/logo/adaptive-transparent-optical.svg'],
     ['static/favicon.svg', '.cache/sources/assets/platform/web/araihu/favicon.svg'],
     ['static/favicon-32.png', '.cache/sources/assets/platform/web/araihu/favicon-32.png'],
@@ -114,6 +128,11 @@ test('generation emits only the approved deterministic overlay', async () => {
   for (const [output, source] of provenance) {
     assert.deepEqual(await bytes(output), await readFile(new URL(source, root)), output);
   }
+  assert.deepEqual(
+    await readFile(new URL('licenses/Lato-OFL-1.1.txt', root)),
+    await readFile(new URL('node_modules/@fontsource/lato/LICENSE', root)),
+    'vendored Lato license must match the pinned package',
+  );
 
   const themeDefault = await bytes('static/theme-default.js').then(String);
   assert.match(themeDefault, /^window\.__araihuDexDefaultTheme = "__ARAIHU_DEX_DEFAULT_THEME__";/m);

@@ -35,6 +35,10 @@ const assetCopies = new Map([
   ['platform/web/araihu/favicon.svg', 'favicon.svg'],
   ['platform/web/araihu/favicon-32.png', 'favicon-32.png'],
 ]);
+const fontCopies = new Map([
+  ['node_modules/@fontsource/lato/files/lato-latin-400-normal.woff2', 'araihu-lato-latin-400.woff2'],
+  ['node_modules/@fontsource/lato/files/lato-latin-700-normal.woff2', 'araihu-lato-latin-700.woff2'],
+]);
 const iconIDs = ['hi-24-outline-moon', 'hi-24-outline-sun'];
 const beginOptions = '<!-- BEGIN GENERATED THEME OPTIONS -->';
 const endOptions = '<!-- END GENERATED THEME OPTIONS -->';
@@ -165,6 +169,9 @@ async function main() {
 
     for (const [source, output] of assetCopies) {
       await copyFile(join(cache, 'assets', source), join(staticDirectory, output));
+    }
+    for (const [source, output] of fontCopies) {
+      await copyFile(join(root, source), join(staticDirectory, output));
     }
     await writeFile(
       join(staticDirectory, 'icons.svg'),

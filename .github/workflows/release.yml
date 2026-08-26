@@ -85,7 +85,7 @@ jobs:
               "org.opencontainers.image.revision=$GITHUB_SHA" \
               "org.opencontainers.image.version=$version" \
               'org.opencontainers.image.source=https://github.com/araihu/dex' \
-              'org.opencontainers.image.licenses=Apache-2.0 AND MIT' \
+              'org.opencontainers.image.licenses=Apache-2.0 AND MIT AND OFL-1.1' \
               "io.araihu.dex.upstream.revision=$DEX_COMMIT" \
               "io.araihu.dex.upstream.digest=$upstream_digest" \
               "io.araihu.dex.goshtoso.version=$GOSHTOSO_VERSION" \

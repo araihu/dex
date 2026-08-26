@@ -4,6 +4,7 @@ COPY --chown=1001:1001 web/templates/header.html web/templates/footer.html /srv/
 COPY --chown=1001:1001 web/static/araihu-* web/static/appearance.js web/static/theme-default.js web/static/favicon.svg web/static/favicon-32.png web/static/icons.svg /srv/dex/web/static/
 COPY --chown=0:0 web/static/theme-default.js /srv/dex/web/static/theme-default.template.js
 COPY --chown=1001:1001 LICENSE NOTICE /usr/share/licenses/araihu-dex/
+COPY --chown=1001:1001 licenses/Lato-OFL-1.1.txt /usr/share/licenses/araihu-dex/
 COPY --chown=1001:1001 .cache/sources/assets/NOTICE /usr/share/licenses/araihu-dex/assets-NOTICE
 COPY --chown=1001:1001 .cache/sources/assets/licenses/Apache-2.0.txt .cache/sources/assets/licenses/heroicons-MIT.txt /usr/share/licenses/araihu-dex/
 COPY --chown=1001:1001 entrypoint.sh /usr/local/bin/araihu-dex-entrypoint

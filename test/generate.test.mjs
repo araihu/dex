@@ -63,6 +63,10 @@ test('generation emits only the approved deterministic overlay', async () => {
   ]);
 
   assert.equal(await bytes('static/theme-allowlist.txt').then(String), expectedCatalog);
+  assert.match(
+    await bytes('static/araihu-styles.css').then(String),
+    /font-family:var\(--font-body,var\(--font-paragraph,sans-serif\)\)/,
+  );
 
   const header = await bytes('templates/header.html').then(String);
   assert.match(header, /<html lang="en">/);

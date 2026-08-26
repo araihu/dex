@@ -11,7 +11,7 @@ html.dark {
   margin: 0;
   background: var(--color-surface);
   color: var(--color-on-surface);
-  font-family: var(--font-body, sans-serif);
+  font-family: var(--font-body, var(--font-paragraph, sans-serif));
 }
 
 .dark .theme-body {

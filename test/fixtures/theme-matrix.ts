@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page } from '@playwright/test';
+import { closeAppearance, openAppearance } from './real-dex';
 
 const exactThemeKeys = [
   '90s',
@@ -46,7 +47,8 @@ async function waitForThemeTransitions(page: Page) {
 }
 
 export async function assertThemeContrastMatrix(page: Page, state: string) {
-  const select = page.getByLabel('Tema');
+  await openAppearance(page);
+  const select = page.getByLabel('Theme');
   const modeButton = page.locator('.araihu-mode-button');
   const root = page.locator('html');
   const failures: Array<{
@@ -88,6 +90,7 @@ export async function assertThemeContrastMatrix(page: Page, state: string) {
 
   await select.selectOption('araihu');
   if (await root.evaluate((element) => element.classList.contains('dark'))) await modeButton.click();
+  await closeAppearance(page);
   if (failures.length) {
     throw new Error(`color-contrast failures: ${JSON.stringify(failures)}`);
   }
@@ -144,7 +147,8 @@ async function sample(page: Page, theme: string, mode: 'light' | 'dark'): Promis
 }
 
 export async function assertThemeMatrix(page: Page) {
-  const select = page.getByLabel('Tema');
+  await openAppearance(page);
+  const select = page.getByLabel('Theme');
   const modeButton = page.locator('.araihu-mode-button');
   const samples: ThemeSample[] = [];
 
@@ -162,6 +166,7 @@ export async function assertThemeMatrix(page: Page) {
   if (await page.locator('html').evaluate((root) => root.classList.contains('dark'))) {
     await modeButton.click();
   }
+  await closeAppearance(page);
 
   expect(samples).toHaveLength(themes.length * 2);
   for (const result of samples) {

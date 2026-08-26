@@ -1,9 +1,11 @@
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import {
   authorizationPath,
+  closeAppearance,
   definitelyInvalidTOTP,
   expect,
   openPassword,
+  openAppearance,
   readTOTPSecret,
   submitPassword,
   submitTOTP,
@@ -46,7 +48,8 @@ async function enroll(
 }
 
 async function setAraiHuMode(page: Page, dark: boolean) {
-  await page.getByLabel('Tema').selectOption('araihu');
+  await openAppearance(page);
+  await page.getByLabel('Theme').selectOption('araihu');
   const root = page.locator('html');
   if (await root.evaluate((element) => element.classList.contains('dark')) !== dark) {
     await page.locator('.araihu-mode-button').click();
@@ -54,6 +57,7 @@ async function setAraiHuMode(page: Page, dark: boolean) {
   await expect(root).toHaveAttribute('data-theme', 'araihu');
   if (dark) await expect(root).toHaveClass(/\bdark\b/);
   else await expect(root).not.toHaveClass(/\bdark\b/);
+  await closeAppearance(page);
 }
 
 async function captureAraiHu(
@@ -77,14 +81,16 @@ async function captureAraiHu(
 
 async function captureOtherThemes(page: Page, testInfo: TestInfo) {
   for (const theme of themes.filter((key) => key !== 'araihu')) {
-    await page.getByLabel('Tema').selectOption(theme);
     for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       for (const mode of ['light', 'dark'] as const) {
+        await openAppearance(page);
+        await page.getByLabel('Theme').selectOption(theme);
         const root = page.locator('html');
         if (await root.evaluate((element) => element.classList.contains('dark')) !== (mode === 'dark')) {
           await page.locator('.araihu-mode-button').click();
         }
+        await closeAppearance(page);
         const body = await page.screenshot({ fullPage: true, animations: 'disabled' });
         await testInfo.attach(`login-${theme}-${width}-${mode}`, { body, contentType: 'image/png' });
       }

@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import {
   authorizationPath,
   expect,
+  openAppearance,
   openPassword,
   readTOTPSecret,
   submitPassword,
@@ -47,14 +48,51 @@ const formerlyFailingErrorPairs = [
   ['zombie', 'dark'],
 ] as const;
 
+test('appearance controls use contrast-safe strong tokens for boundaries and focus', async ({ page }) => {
+  await page.goto(authorizationPath());
+  await openAppearance(page);
+  const root = page.locator('html');
+  const select = page.getByLabel('Theme');
+  const modeButton = page.locator('.araihu-mode-button');
+  const failures = [];
+
+  for (const theme of themes) {
+    await select.selectOption(theme);
+    if (await root.evaluate((element) => element.classList.contains('dark'))) await modeButton.click();
+    for (const mode of ['light', 'dark'] as const) {
+      if (mode === 'dark') await modeButton.click();
+      await select.focus();
+      const colors = await select.evaluate((element, dark) => {
+        const control = getComputedStyle(element);
+        const probe = document.createElement('span');
+        probe.style.color = `var(${dark ? '--color-on-surface-dark-strong' : '--color-on-surface-strong'})`;
+        document.body.append(probe);
+        const expected = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          boundary: control.borderTopColor,
+          focus: control.outlineColor,
+          expected,
+        };
+      }, mode === 'dark');
+      if (colors.boundary !== colors.expected || colors.focus !== colors.expected) {
+        failures.push({ theme, mode, ...colors });
+      }
+    }
+  }
+
+  expect(failures).toEqual([]);
+});
+
 test('primary buttons use the approved contrast-safe token pair in every formerly failing mode', async ({ page }) => {
   await openPassword(page);
   const root = page.locator('html');
   const modeButton = page.locator('.araihu-mode-button');
   const primary = page.locator('#submit-login');
+  await openAppearance(page);
 
   for (const [theme, mode] of formerlyFailingPrimaryPairs) {
-    await page.getByLabel('Tema').selectOption(theme);
+    await page.getByLabel('Theme').selectOption(theme);
     const wantsDark = mode === 'dark';
     if (await root.evaluate((element) => element.classList.contains('dark')) !== wantsDark) {
       await modeButton.click();
@@ -95,9 +133,10 @@ test('error boxes retain danger tokens on a surface in every formerly failing mo
   const root = page.locator('html');
   const modeButton = page.locator('.araihu-mode-button');
   const errorBox = page.locator('#login-error');
+  await openAppearance(page);
 
   for (const [theme, mode] of formerlyFailingErrorPairs) {
-    await page.getByLabel('Tema').selectOption(theme);
+    await page.getByLabel('Theme').selectOption(theme);
     const wantsDark = mode === 'dark';
     if (await root.evaluate((element) => element.classList.contains('dark')) !== wantsDark) {
       await modeButton.click();
@@ -133,9 +172,10 @@ test('home uses upstream theme hooks bound to contrast-safe tokens in the full m
   const root = page.locator('html');
   const home = page.locator('.dex-home');
   const modeButton = page.locator('.araihu-mode-button');
+  await openAppearance(page);
 
   for (const theme of themes) {
-    await page.getByLabel('Tema').selectOption(theme);
+    await page.getByLabel('Theme').selectOption(theme);
     if (await root.evaluate((element) => element.classList.contains('dark'))) await modeButton.click();
     for (const mode of ['light', 'dark'] as const) {
       if (mode === 'dark') await modeButton.click();
@@ -188,8 +228,9 @@ test('approval subtle text, scope list, and success action use approved pairs in
   const subtle = page.locator('.dex-subtle-text');
   const list = page.locator('.dex-list');
   const success = page.locator('.theme-btn--success');
+  await openAppearance(page);
   for (const theme of themes) {
-    await page.getByLabel('Tema').selectOption(theme);
+    await page.getByLabel('Theme').selectOption(theme);
     if (await root.evaluate((element) => element.classList.contains('dark'))) await modeButton.click();
     for (const mode of ['light', 'dark'] as const) {
       if (mode === 'dark') await modeButton.click();

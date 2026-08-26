@@ -7,6 +7,7 @@ import {
   baseURL,
   definitelyInvalidTOTP,
   expect,
+  openAppearance,
   readTOTPSecret,
   submitPassword,
   submitTOTP,
@@ -215,7 +216,8 @@ test('real login, password error, CSP, and overlay scripts preserve locked seman
   await assertCriticalAxe(page);
   await expect(page.getByRole('link', { name: 'Log in with Email' })).toHaveAttribute('href', /\/auth\/local\?/);
   await expect(page.locator('form')).toHaveCount(0);
-  await expect(page.locator('img.theme-navbar__logo')).toHaveAttribute('alt', 'AraiHu');
+  await expect(page.locator('img.theme-navbar__logo')).toHaveAttribute('alt', 'AraiHu Dex');
+  await expect(page.locator('img.theme-navbar__logo')).toHaveAttribute('src', 'theme/logo.png');
   const overlayScripts = await page.locator('script[src$="theme-default.js"], script[src$="appearance.js"]').evaluateAll((scripts) => scripts.map((script) => ({
     src: script.getAttribute('src'), text: script.textContent,
   })));
@@ -241,10 +243,11 @@ test('real storage choices and exceptions leave authentication semantics intact'
   const formBefore = await page.locator('form').evaluate((form) => ({
     action: form.getAttribute('action'), method: form.getAttribute('method'), html: form.innerHTML,
   }));
-  await page.getByLabel('Tema').selectOption('dracula');
-  await page.getByRole('button', { name: 'Ativar modo escuro' }).press('Enter');
-  await page.getByRole('button', { name: 'Não permitir' }).click();
-  await expect(page.getByLabel('Preferências de aparência')).toBeHidden();
+  await openAppearance(page);
+  await page.getByLabel('Theme').selectOption('dracula');
+  await page.getByRole('button', { name: 'Switch to dark mode' }).press('Enter');
+  await page.getByRole('button', { name: 'Not now' }).click();
+  await expect(page.getByLabel('Appearance preferences')).toBeHidden();
   await expect(page.getByLabel('Email Address')).toBeFocused();
   expect(await page.locator('form').evaluate((form) => ({
     action: form.getAttribute('action'), method: form.getAttribute('method'), html: form.innerHTML,
@@ -264,8 +267,9 @@ test('real storage choices and exceptions leave authentication semantics intact'
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'pastel');
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-  await expect(page.getByLabel('Tema')).toHaveValue('pastel');
-  await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toHaveAttribute('aria-pressed', 'true');
+  await openAppearance(page);
+  await expect(page.getByLabel('Theme')).toHaveValue('pastel');
+  await expect(page.getByRole('button', { name: 'Switch to light mode' })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('real Dex contains cookie and localStorage failures', async ({ page }) => {
@@ -285,13 +289,14 @@ test('real Dex contains cookie and localStorage failures', async ({ page }) => {
     });
   });
   await openPasswordWithAssertions(page);
-  await page.getByRole('button', { name: 'Permitir', exact: true }).click();
-  await page.getByLabel('Tema').selectOption('zombie');
-  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await openAppearance(page);
+  await page.getByLabel('Theme').selectOption('zombie');
+  await page.getByRole('button', { name: 'Switch to dark mode' }).click();
   await expect(page.locator('form')).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'zombie');
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-  await expect(page.getByLabel('Preferências de aparência')).toBeVisible();
+  await expect(page.getByLabel('Appearance preferences')).toBeVisible();
 });
 
 test('TOTP and WebAuthn registration/login preserve URLs and retryable errors', async ({

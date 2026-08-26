@@ -37,6 +37,20 @@ export async function openPassword(page: Page, path = authorizationPath()) {
   await page.getByRole('link', { name: 'Log in with Email' }).click();
 }
 
+export async function openAppearance(page: Page) {
+  const disclosure = page.locator('.araihu-appearance');
+  if (!await disclosure.evaluate((element) => element.hasAttribute('open'))) {
+    await page.locator('.araihu-appearance-trigger').click();
+  }
+}
+
+export async function closeAppearance(page: Page) {
+  const disclosure = page.locator('.araihu-appearance');
+  if (await disclosure.evaluate((element) => element.hasAttribute('open'))) {
+    await page.locator('.araihu-appearance-trigger').click();
+  }
+}
+
 export async function submitPassword(page: Page, email: string, password = 'password') {
   await page.getByLabel('Email Address').fill(email);
   await page.getByLabel('Password').fill(password);

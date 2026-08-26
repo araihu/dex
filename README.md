@@ -1,8 +1,9 @@
 # AraiHu Dex
 
-Thin AraiHu frontend overlay for a locked official Dex prerelease image. It
-preserves Dex authentication behavior, flow templates, TOTP, and WebAuthn logic
-while adding released Goshtoso themes and AraiHu assets.
+Thin AraiHu-maintained frontend overlay for a locked official Dex prerelease
+image. It preserves Dex authentication behavior, native branding hooks, flow
+templates, TOTP, and WebAuthn logic while adding released Goshtoso themes and
+optional AraiHu assets.
 
 The approved design and implementation plan are in:
 
@@ -11,12 +12,11 @@ The approved design and implementation plan are in:
 
 ## Lifecycle gates
 
-Repository visibility must be explicitly chosen before creating a GitHub
-repository, and creating `github.com/araihu/dex` then requires separate
-explicit approval. No branch is pushed without separate explicit approval. No
-tag or GitHub Release is created without separate explicit approval. No GHCR
-image is published without separate explicit approval. No homelab file is
-edited or deployment performed without separate explicit approval.
+Public visibility, creation of `github.com/araihu/dex`, initial `main` push,
+and GHCR publication were explicitly authorized on 2026-08-25. A release tag
+and GitHub Release remain separate lifecycle actions and require their own
+explicit versioned authorization. No homelab file is edited or deployment
+performed without separate explicit approval.
 
 Green tests, a local build, review approval, or this repository's existence do
 not authorize any of those actions.
@@ -52,6 +52,13 @@ verified `master` commit and digest, reads the official
 `org.opencontainers.image.version` pseudo-version, and writes that version tag
 with the digest as the lock. It never follows the mutable tag in the
 Dockerfile.
+
+The overlay keeps Dex's native logo and favicon by default. Its header still
+uses Dex's `logo` value, so `frontend.logoURL` continues to work from the
+normal Dex configuration (including a mounted, environment-templated config).
+Theme logo and favicon files may also be replaced through the existing Dex
+theme mount paths. The packaged AraiHu files remain available under
+`/srv/dex/web/static/` for an explicit branding configuration.
 
 The header's parser-blocking `theme-default.js` applies the selected default
 and allowed stored appearance before the deferred control script runs. The

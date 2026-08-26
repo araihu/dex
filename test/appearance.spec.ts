@@ -50,13 +50,13 @@ async function serveFixture(page: Page, runtimeDefault = 'araihu', delayAppearan
     <script defer src="/static/appearance.js"></script>
   </head>
   <body>
-    <label for="araihu-theme">Tema</label>
-    <select id="araihu-theme" aria-label="Tema">${options}</select>
-    <button class="araihu-mode-button" type="button" aria-label="Ativar modo escuro" aria-pressed="false">Modo</button>
+    <label for="araihu-theme">Theme</label>
+    <select id="araihu-theme" aria-label="Theme">${options}</select>
+    <button class="araihu-mode-button" type="button" aria-label="Switch to dark mode" aria-pressed="false">Mode</button>
     <div class="dex-container"><form method="post" action="/auth/local"><input name="login" autofocus><button>Entrar</button></form></div>
-    <aside id="araihu-storage-notice" aria-label="Preferências de aparência">
-      <button type="button" data-storage-choice="allowed">Permitir</button>
-      <button type="button" data-storage-choice="denied">Não permitir</button>
+    <aside id="araihu-storage-notice" aria-label="Appearance preferences">
+      <button type="button" data-storage-choice="allowed">Save</button>
+      <button type="button" data-storage-choice="denied">Not now</button>
     </aside>
   </body>
 </html>`,
@@ -98,7 +98,7 @@ test('denied storage changes only the current page', async ({ page }) => {
   await page.context().addCookies([{ name: 'gt_storage', value: 'denied', url: origin }]);
 
   await page.goto(loginURL);
-  await page.getByLabel('Tema').selectOption('dracula');
+  await page.getByLabel('Theme').selectOption('dracula');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dracula');
   await page.reload();
 
@@ -115,8 +115,8 @@ test('allowed storage restores valid preferences ahead of runtime and media defa
 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dracula');
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-  await expect(page.getByLabel('Tema')).toHaveValue('dracula');
-  await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Theme')).toHaveValue('dracula');
+  await expect(page.getByRole('button', { name: 'Switch to light mode' })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('head bootstrap applies stored appearance before deferred controls load', async ({ page }) => {
@@ -152,7 +152,7 @@ test('invalid stored and runtime themes fall back through the actual options', a
   await page.goto(loginURL);
 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
-  await expect(page.getByLabel('Tema')).toHaveValue('araihu');
+  await expect(page.getByLabel('Theme')).toHaveValue('araihu');
 });
 
 test('malformed stored dark mode falls back to the system preference', async ({ page }) => {
@@ -164,7 +164,7 @@ test('malformed stored dark mode falls back to the system preference', async ({ 
   await page.goto(loginURL);
 
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-  await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Switch to light mode' })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('without an allowed preference runtime theme and system dark mode win', async ({ page }) => {
@@ -175,21 +175,21 @@ test('without an allowed preference runtime theme and system dark mode win', asy
 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'christmas');
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-  await expect(page.getByLabel('Preferências de aparência')).toBeVisible();
+  await expect(page.getByLabel('Appearance preferences')).toBeVisible();
 });
 
 test('allow writes the host cookie and only appearance preferences', async ({ page }) => {
   await serveFixture(page);
   await page.goto(loginURL);
-  await page.getByLabel('Tema').selectOption('pastel');
-  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
-  await page.getByRole('button', { name: 'Permitir', exact: true }).click();
+  await page.getByLabel('Theme').selectOption('pastel');
+  await page.getByRole('button', { name: 'Switch to dark mode' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
 
   const cookie = (await page.context().cookies(origin)).find(({ name }) => name === 'gt_storage');
   expect(cookie).toMatchObject({ value: 'allowed', path: '/', sameSite: 'Lax' });
   expect(cookie!.expires - Date.now() / 1000).toBeGreaterThan(15_551_900);
   expect(cookie!.expires - Date.now() / 1000).toBeLessThanOrEqual(15_552_000);
-  await expect(page.getByLabel('Preferências de aparência')).toBeHidden();
+  await expect(page.getByLabel('Appearance preferences')).toBeHidden();
   expect(await page.evaluate(() => ({
     theme: localStorage.getItem('theme'),
     darkMode: localStorage.getItem('darkMode'),
@@ -202,7 +202,7 @@ test('deny removes only overlay appearance keys', async ({ page }) => {
   await seedStorage(page, { theme: 'dracula', darkMode: 'true', unrelated: 'keep' });
   await page.goto(loginURL);
 
-  await page.getByRole('button', { name: 'Não permitir' }).click();
+  await page.getByRole('button', { name: 'Not now' }).click();
 
   expect(await page.evaluate(() => ({
     theme: localStorage.getItem('theme'),
@@ -217,9 +217,9 @@ test('notice dismissal restores the upstream autofocus target', async ({ page })
   await serveFixture(page);
   await page.goto(loginURL);
 
-  await page.getByRole('button', { name: 'Não permitir' }).click();
+  await page.getByRole('button', { name: 'Not now' }).click();
 
-  await expect(page.getByLabel('Preferências de aparência')).toBeHidden();
+  await expect(page.getByLabel('Appearance preferences')).toBeHidden();
   await expect(page.locator('[name="login"]')).toBeFocused();
 });
 
@@ -236,8 +236,8 @@ test('storage exceptions keep login and in-memory appearance usable', async ({ p
     });
   });
   await page.goto(loginURL);
-  await page.getByLabel('Tema').selectOption('dracula');
-  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
+  await page.getByLabel('Theme').selectOption('dracula');
+  await page.getByRole('button', { name: 'Switch to dark mode' }).click();
 
   await expect(page.locator('form')).toBeVisible();
   await expect(page).toHaveURL(/\/auth\/local/);
@@ -264,8 +264,8 @@ test('non-DOM storage exceptions stay contained', async ({ page }) => {
     });
   });
   await page.goto(loginURL);
-  await page.getByLabel('Tema').selectOption('zombie');
-  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
+  await page.getByLabel('Theme').selectOption('zombie');
+  await page.getByRole('button', { name: 'Switch to dark mode' }).click();
 
   await expect(page.locator('form')).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'zombie');
@@ -283,14 +283,14 @@ test('cookie exceptions keep controls usable and errors contained', async ({ pag
     });
   });
   await page.goto(loginURL);
-  await page.getByRole('button', { name: 'Permitir', exact: true }).click();
-  await page.getByLabel('Tema').selectOption('zombie');
-  await page.getByRole('button', { name: 'Ativar modo escuro' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByLabel('Theme').selectOption('zombie');
+  await page.getByRole('button', { name: 'Switch to dark mode' }).click();
 
   await expect(page.locator('form')).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'zombie');
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-  await expect(page.getByLabel('Preferências de aparência')).toBeVisible();
+  await expect(page.getByLabel('Appearance preferences')).toBeVisible();
   expect(await page.evaluate(() => ({
     theme: localStorage.getItem('theme'),
     darkMode: localStorage.getItem('darkMode'),
@@ -298,7 +298,7 @@ test('cookie exceptions keep controls usable and errors contained', async ({ pag
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'araihu');
   await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
-  await expect(page.getByRole('button', { name: 'Ativar modo escuro' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Switch to dark mode' })).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('native controls update accessible state without touching the login form', async ({ page }) => {
@@ -310,13 +310,13 @@ test('native controls update accessible state without touching the login form', 
     html: form.innerHTML,
   }));
 
-  await page.getByLabel('Tema').focus();
-  await page.getByLabel('Tema').selectOption('neo-brutalism');
-  await page.getByRole('button', { name: 'Ativar modo escuro' }).press('Enter');
+  await page.getByLabel('Theme').focus();
+  await page.getByLabel('Theme').selectOption('neo-brutalism');
+  await page.getByRole('button', { name: 'Switch to dark mode' }).press('Enter');
 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'neo-brutalism');
   await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-  await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Switch to light mode' })).toHaveAttribute('aria-pressed', 'true');
   expect(await page.locator('form').evaluate((form) => ({
     action: form.getAttribute('action'),
     method: form.getAttribute('method'),

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
@@ -8,8 +8,7 @@
     <link href="{{ url .ReqPath "static/main.css" }}" rel="stylesheet">
     <link href="{{ url .ReqPath "theme/styles.css" }}" rel="stylesheet">
     <link href="{{ url .ReqPath "static/araihu-styles.css" }}" rel="stylesheet">
-    <link rel="icon" type="image/svg+xml" href="{{ url .ReqPath "static/favicon.svg" }}">
-    <link rel="icon" type="image/png" sizes="32x32" href="{{ url .ReqPath "static/favicon-32.png" }}">
+    <link rel="icon" href="{{ url .ReqPath "theme/favicon.png" }}">
     <script src="{{ url .ReqPath "static/theme-default.js" }}"></script>
     <script defer src="{{ url .ReqPath "static/appearance.js" }}"></script>
   </head>
@@ -17,12 +16,15 @@
   <body class="theme-body">
     <div class="theme-navbar">
       <div class="theme-navbar__logo-wrap">
-        <img class="theme-navbar__logo" src="{{ url .ReqPath "static/araihu-logo.svg" }}" alt="AraiHu">
+        <img class="theme-navbar__logo" src="{{ url .ReqPath logo }}" alt="{{ issuer }}">
       </div>
-      <div class="araihu-appearance-controls">
-        <label for="araihu-theme">Tema</label>
-        <select id="araihu-theme" aria-label="Tema">
-          <!-- BEGIN GENERATED THEME OPTIONS -->
+      <details class="araihu-appearance">
+        <summary class="araihu-appearance-trigger">Appearance</summary>
+        <div class="araihu-appearance-controls">
+          <label for="araihu-theme">Theme</label>
+          <span class="araihu-theme-select">
+            <select id="araihu-theme" aria-label="Theme">
+              <!-- BEGIN GENERATED THEME OPTIONS -->
           <option value="90s">90s</option>
           <option value="araihu">Arai Hû</option>
           <option value="arctic">Arctic</option>
@@ -40,12 +42,14 @@
           <option value="prototype">Prototype</option>
           <option value="zombie">Zombie</option>
           <!-- END GENERATED THEME OPTIONS -->
-        </select>
-        <button class="araihu-mode-button" type="button" aria-label="Ativar modo escuro" aria-pressed="false">
-          <svg class="araihu-moon-icon" aria-hidden="true"><use href="{{ url .ReqPath "static/icons.svg#hi-24-outline-moon" }}"></use></svg>
-          <svg class="araihu-sun-icon" aria-hidden="true"><use href="{{ url .ReqPath "static/icons.svg#hi-24-outline-sun" }}"></use></svg>
-        </button>
-      </div>
+            </select>
+          </span>
+          <button class="araihu-mode-button" type="button" aria-label="Switch to dark mode" aria-pressed="false">
+            <svg class="araihu-moon-icon" aria-hidden="true"><use href="{{ url .ReqPath "static/icons.svg#hi-24-outline-moon" }}"></use></svg>
+            <svg class="araihu-sun-icon" aria-hidden="true"><use href="{{ url .ReqPath "static/icons.svg#hi-24-outline-sun" }}"></use></svg>
+          </button>
+        </div>
+      </details>
     </div>
 
-    <div class="dex-container">
+    <main class="dex-container">

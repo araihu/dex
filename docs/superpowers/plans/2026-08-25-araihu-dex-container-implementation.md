@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan.
 
+> **Post-implementation adjustment (2026-08-25):** Dex's native `logo` value
+> and `theme/favicon.png` remain the default branding contract. Packaged AraiHu
+> assets are optional overrides through normal Dex configuration or mounted
+> theme paths. Goshtoso tokens, theme selection, storage consent, and all
+> authentication-flow boundaries remain unchanged.
+
 **Goal:** Build and verify a thin, AraiHu-branded overlay image at `ghcr.io/araihu/dex` while preserving the official Dex `master` authentication frontend and logic.
 
 **Architecture:** Generate deterministic CSS/asset bytes from pinned Goshtoso and AraiHu Assets releases, copy only shared header/footer and branded static files over a digest-pinned official Dex image, then validate `ARAIHU_DEX_THEME` in a minimal shell entrypoint before delegating to Dex's original entrypoint. The implementation never vendors or overrides flow templates. Platform image manifests/configuration are reproducible; BuildKit attestation envelopes are verified by subject digest and may vary per invocation.

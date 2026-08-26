@@ -1,25 +1,25 @@
 # AraiHu Dex Container Design
 
 **Date:** 2026-08-25  
-**Status:** Approved  
+**Status:** Approved and implemented locally
 **Target repository:** `/Users/guilhermecastro/repos/araihu/dex`  
 **Target image:** `ghcr.io/araihu/dex`
 
 ## Summary
 
-Create a thin AraiHu frontend overlay on the official Dex prerelease container for
+Create a thin AraiHu-maintained frontend overlay on the official Dex prerelease container for
 commit `ab64ed778070e983cbb10cfc07ea4bb397d14312`. The image preserves Dex
 authentication behavior, templates, form semantics, TOTP flow, and WebAuthn
-JavaScript. It adds the released Goshtoso theme catalog, AraiHu brand assets, a
-small accessible client-side theme control, the established AraiHu
-browser-storage consent contract, and reproducible, verifiable supply-chain
-evidence.
+JavaScript. It keeps Dex's native logo and favicon hooks by default, adds the
+released Goshtoso theme catalog and optional AraiHu brand assets, a small
+accessible client-side theme control, the established AraiHu browser-storage
+consent contract, and reproducible, verifiable supply-chain evidence.
 
 The implementation is not a Dex source fork. It derives from an upstream image pinned by multi-architecture digest, sets `DEX_FRONTEND_DIR=/srv/dex/web`, and overwrites only shared frontend files and branded assets already present in that filesystem tree. Disabling `DEX_FRONTEND_DIR` restores the embedded upstream frontend without changing the binary or stored identity data.
 
 ## Goals
 
-1. Publish an AraiHu-branded Dex image at `ghcr.io/araihu/dex` after an explicit publication gate.
+1. Publish an AraiHu-maintained, Goshtoso-themed Dex image at `ghcr.io/araihu/dex` after an explicit publication gate.
 2. Apply any released Goshtoso theme to every Dex page, with AraiHu as the runtime default.
 3. Preserve all Dex authentication logic and flow-specific frontend semantics.
 4. Preserve current Dex `master` TOTP enrollment/verification and WebAuthn registration/login behavior.
@@ -101,7 +101,7 @@ The final stage starts from the exact upstream multi-architecture digest. It add
 - shared `header.html` and `footer.html` overrides;
 - generated `static/araihu-styles.css` containing all selected-release Goshtoso themes and the Dex adapter;
 - same-origin `appearance.js` and runtime-generated `theme-default.js`;
-- logo, favicon, and UI icon assets;
+- optional AraiHu logo/favicon assets and required UI icon assets;
 - a small entrypoint wrapper;
 - AraiHu overlay notices and licenses.
 
@@ -131,9 +131,11 @@ This preserves:
 
 ### Shared header and footer
 
-The `header.html` override starts from the exact upstream file. It retains all upstream template calls and asset URLs, then adds only:
+The `header.html` override starts from the exact upstream file. It retains Dex's
+native `logo` template value and `theme/favicon.png`, so `frontend.logoURL` and
+mounted theme assets remain supported. It then adds only:
 
-- AraiHu logo and favicon references;
+- optional packaged AraiHu logo and favicon files for explicit configuration;
 - the generated theme stylesheet;
 - an early same-origin theme-default script;
 - the same-origin appearance controller;
@@ -149,7 +151,9 @@ No flow copy, heading hierarchy, field ordering, task layout, or authentication-
 ### Relationship of sources
 
 - Goshtoso is authoritative for the released multi-theme token catalog and light/dark semantics.
-- AraiHu Assets is authoritative for organization brand marks, platform favicon files, UI icon acquisition, checksums, notices, and brand terms.
+- AraiHu Assets is authoritative for optional organization brand marks,
+  platform favicon files, UI icon acquisition, checksums, notices, and brand
+  terms.
 - The AraiHu theme bundled in Goshtoso is the theme implementation used by the selector. Brand files are not extracted from Goshtoso.
 - Dex owns all page and form markup.
 
@@ -404,16 +408,14 @@ Rollback verification covers login, consent, TOTP, WebAuthn, home, and logout ag
 
 ## Repository and lifecycle boundaries
 
-The target directory does not exist and must remain absent until the implementation plan is approved. At that gate, initialize `/Users/guilhermecastro/repos/araihu/dex` with the established AraiHu Git identity and conventions, then add this approved design document to the new repository.
-
-Repository visibility remains undecided. Ask before creating `github.com/araihu/dex`.
+The local repository is initialized at `/Users/guilhermecastro/repos/araihu/dex`
+with the established AraiHu Git identity and conventions. Public visibility,
+creation of `github.com/araihu/dex`, initial `main` push, and GHCR publication
+were explicitly authorized on 2026-08-25.
 
 Separate explicit approvals are required for:
 
-- creating the GitHub repository;
-- pushing any branch;
 - creating a tag or GitHub Release;
-- publishing any GHCR image;
 - editing or deploying the homelab.
 
 ## Acceptance criteria

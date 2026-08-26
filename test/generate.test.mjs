@@ -65,6 +65,7 @@ test('generation emits only the approved deterministic overlay', async () => {
   assert.equal(await bytes('static/theme-allowlist.txt').then(String), expectedCatalog);
 
   const header = await bytes('templates/header.html').then(String);
+  assert.match(header, /<html lang="en">/);
   assert.match(header, /<title>{{ issuer }}<\/title>/);
   assert.match(header, /{{ url \.ReqPath "theme\/styles\.css" }}/);
   assert.match(header, /{{ url \.ReqPath "static\/araihu-styles\.css" }}/);
@@ -72,9 +73,12 @@ test('generation emits only the approved deterministic overlay', async () => {
     header.indexOf('theme/styles.css') < header.indexOf('static/araihu-styles.css'),
     'overlay stylesheet must load after upstream theme stylesheet',
   );
-  assert.match(header, /<label[^>]+for="araihu-theme">Tema<\/label>/);
-  assert.match(header, /<select[^>]+id="araihu-theme"[^>]+aria-label="Tema"/);
-  assert.match(header, /<button[^>]+type="button"[^>]+aria-label="Ativar modo escuro"[^>]+aria-pressed="false"/);
+  assert.match(header, /<details class="araihu-appearance">/);
+  assert.match(header, /<summary class="araihu-appearance-trigger">Appearance<\/summary>/);
+  assert.match(header, /<label[^>]+for="araihu-theme">Theme<\/label>/);
+  assert.match(header, /<span class="araihu-theme-select">\s*<select[^>]+id="araihu-theme"[^>]+aria-label="Theme"/);
+  assert.match(header, /<button[^>]+type="button"[^>]+aria-label="Switch to dark mode"[^>]+aria-pressed="false"/);
+  assert.match(header, /<main class="dex-container">/);
   const scripts = [...header.matchAll(/<script\b[^>]*>/g)].map((match) => match[0]);
   assert.deepEqual(scripts, [
     '<script src="{{ url .ReqPath "static/theme-default.js" }}">',
@@ -85,11 +89,14 @@ test('generation emits only the approved deterministic overlay', async () => {
     'runtime default must load before the appearance controller',
   );
   assert.equal((header.match(/<option value=/g) ?? []).length, 16);
-  assert.doesNotMatch(header, /{{ url \.ReqPath logo }}/);
-  assert.match(header, /{{ url \.ReqPath "static\/araihu-logo\.svg" }}/);
+  assert.match(header, /<img class="theme-navbar__logo" src="{{ url \.ReqPath logo }}" alt="{{ issuer }}">/);
+  assert.match(header, /{{ url \.ReqPath "theme\/favicon\.png" }}/);
 
   const footer = await bytes('templates/footer.html').then(String);
   assert.match(footer, /id="araihu-storage-notice"/);
+  assert.match(footer, /Save appearance preferences in this browser\?/);
+  assert.match(footer, />Save<\/button>/);
+  assert.match(footer, />Not now<\/button>/);
   assert.match(footer, /data-storage-choice="allowed"/);
   assert.match(footer, /data-storage-choice="denied"/);
   assert.match(footer, /<\/body>\n<\/html>\n$/);

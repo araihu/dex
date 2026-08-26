@@ -48,7 +48,7 @@
   const applyDarkMode = () => {
     root.classList.toggle('dark', darkMode);
     modeButton.setAttribute('aria-pressed', String(darkMode));
-    modeButton.setAttribute('aria-label', darkMode ? 'Ativar modo claro' : 'Ativar modo escuro');
+    modeButton.setAttribute('aria-label', darkMode ? 'Switch to light mode' : 'Switch to dark mode');
   };
   const persist = () => {
     if (!storageAllowed) return;

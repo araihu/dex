@@ -38,7 +38,7 @@ async function enroll(
 ) {
   await submitPassword(page, email);
   const secret = readTOTPSecret(userID);
-  await submitTOTP(page, totp(secret, -1));
+  await submitTOTP(page, totp(secret));
   await createVirtualAuthenticator();
   await Promise.all([
     page.waitForURL(/\/approval\?/),

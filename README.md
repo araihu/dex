@@ -74,6 +74,11 @@ accessibility, and vulnerability checks. CI builds only into the local Docker
 daemon, OCI files, and local BuildKit caches. It has no registry login, image
 publication, tag, attestation generation, or signing step.
 
+Committed screenshot baselines are canonical Ubuntu/Playwright output used by
+CI. Goshtoso theme font names can resolve to different host-installed fonts on
+macOS, so local macOS screenshots are useful for interactive review but must
+not replace the Linux regression baselines.
+
 Verify the locked official Dex image's revision, Cosign identity, and SLSA
 provenance from public registry data, without a GitHub token or update
 preparation:

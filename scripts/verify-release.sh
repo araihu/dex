@@ -7,7 +7,7 @@ die() {
 }
 
 usage() {
-	die 'usage: scripts/verify-release.sh local <oci.tar> | remote <image-ref>'
+	die 'usage: scripts/verify-release.sh local <oci.tar> | remote <image-ref> | remote-candidate <image@digest>'
 }
 
 [[ $# -eq 2 ]] || usage
@@ -375,14 +375,19 @@ for architecture, descriptor in images.items():
 print('verify-release: local ok')
 PY
 		;;
-	remote)
+	remote|remote-candidate)
 		command -v docker >/dev/null 2>&1 || die 'docker with Buildx is required for remote verification'
 		command -v jq >/dev/null 2>&1 || die 'jq is required for remote verification'
 		command -v python3 >/dev/null 2>&1 || die 'python3 is required for remote verification'
 		command -v cosign >/dev/null 2>&1 || die 'cosign is required for remote verification'
 		command -v gh >/dev/null 2>&1 || die 'GitHub CLI is required for remote verification'
-		[[ "$subject" =~ ^ghcr\.io/araihu/dex(@sha256:[0-9a-f]{64}|:[A-Za-z0-9._-]+)$ ]] ||
-			die 'remote image must be an exact ghcr.io/araihu/dex tag or digest reference'
+		if [[ "$mode" == remote-candidate ]]; then
+			[[ "$subject" =~ ^ghcr\.io/araihu/dex@sha256:[0-9a-f]{64}$ ]] ||
+				die 'remote candidate must be an exact ghcr.io/araihu/dex digest reference'
+		else
+			[[ "$subject" =~ ^ghcr\.io/araihu/dex(@sha256:[0-9a-f]{64}|:[A-Za-z0-9._-]+)$ ]] ||
+				die 'remote image must be an exact ghcr.io/araihu/dex tag or digest reference'
+		fi
 
 		state=$(mktemp -d "${TMPDIR:-/tmp}/araihu-dex-release-verify.XXXXXX")
 		cleanup() {
@@ -467,7 +472,9 @@ PY
 			"$image:latest"
 		)
 		candidate_subject=false
-		if [[ "$subject" =~ ^$image:candidate-[0-9a-f]{40}$ ]]; then
+		if [[ "$mode" == remote-candidate ]]; then
+			candidate_subject=true
+		elif [[ "$subject" =~ ^$image:candidate-[0-9a-f]{40}$ ]]; then
 			candidate_subject=true
 		elif [[ "$subject" != "$image@$digest" ]]; then
 			matched=false

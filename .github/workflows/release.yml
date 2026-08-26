@@ -247,21 +247,35 @@ jobs:
             [[ "$root_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             root_hex=${root_digest#sha256:}
             blob_digest="sha256:$(tar -xOf "$OCI_ARCHIVE" "blobs/sha256/$root_hex" | sha256sum | awk '{print $1}')"
+            local_index_json=$(tar -xOf "$OCI_ARCHIVE" "blobs/sha256/$root_hex")
             [[ "$blob_digest" = "$root_digest" ]]
             local_digest=$root_digest
           else
+            local_index_json=$index_json
             local_digest="sha256:$(tar -xOf "$OCI_ARCHIVE" index.json | sha256sum | awk '{print $1}')"
           fi
           [[ "$local_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           remote_digest=$(docker buildx imagetools inspect "$CANDIDATE" --format '{{json .Manifest}}' | jq -er '.digest')
           [[ "$remote_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$remote_digest" = "$local_digest" ]] || {
-            echo "candidate digest differs from locally verified OCI archive: $remote_digest != $local_digest" >&2
+          docker buildx imagetools inspect --raw "$IMAGE@$remote_digest" > "$RUNNER_TEMP/candidate-index.json"
+          jq -e '
+            [.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")] as $images |
+            ($images | length == 2) and
+            ([$images[] | select(.mediaType == "application/vnd.oci.image.manifest.v1+json")] | length == 2) and
+            ([$images[] | [.platform.os, .platform.architecture]] | sort == [["linux", "amd64"], ["linux", "arm64"]])
+          ' "$RUNNER_TEMP/candidate-index.json" >/dev/null || {
+            echo "remote platform set mismatch" >&2
             exit 1
           }
-          echo "digest=$local_digest" >> "$GITHUB_OUTPUT"
-          docker buildx imagetools inspect --raw "$IMAGE@$local_digest" > "$RUNNER_TEMP/candidate-index.json"
           for architecture in amd64 arm64; do
+            local_platform_digest=$(printf '%s\n' "$local_index_json" | jq -er --arg architecture "$architecture" '
+              [.manifests[] | select(
+                .platform.os == "linux" and
+                .platform.architecture == $architecture and
+                (.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"
+              )] |
+              if length == 1 then .[0].digest else error("local platform manifest count mismatch") end
+            ')
             platform_digest=$(jq -er --arg architecture "$architecture" '
               [.manifests[] | select(
                 .platform.os == "linux" and
@@ -270,9 +284,15 @@ jobs:
               )] |
               if length == 1 then .[0].digest else error("platform manifest count mismatch") end
             ' "$RUNNER_TEMP/candidate-index.json")
+            [[ "$local_platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$platform_digest" = "$local_platform_digest" ]] || {
+              echo "published linux/$architecture manifest differs from locally verified OCI archive: $platform_digest != $local_platform_digest" >&2
+              exit 1
+            }
             echo "${architecture}_digest=$platform_digest" >> "$GITHUB_OUTPUT"
           done
+          echo "digest=$remote_digest" >> "$GITHUB_OUTPUT"
 
       - name: Scan exact amd64 candidate manifest
         id: scan
@@ -319,9 +339,10 @@ jobs:
       - name: Verify signed candidate and workflow identity
         id: verify_candidate
         env:
-          CANDIDATE: ${{ steps.release.outputs.candidate }}
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
           GH_TOKEN: ${{ github.token }}
-        run: scripts/verify-release.sh remote "$CANDIDATE"
+        run: scripts/verify-release.sh remote-candidate "$IMAGE@$DIGEST"
 
       - name: Collect immutable release evidence
         id: evidence

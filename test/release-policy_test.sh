@@ -157,8 +157,10 @@ abort 'candidate build must carry exact platform/provenance settings' unless pub
 
 candidate = step(steps, 'candidate')
 candidate_run = candidate['run'].to_s
-abort 'candidate digest must match the verified OCI archive' unless candidate_run.include?('tar -xOf "$OCI_ARCHIVE" index.json') && candidate_run.include?('root_digest') && candidate_run.include?('blob_digest') && candidate_run.include?('remote_digest') && candidate_run.include?('remote_digest" = "$local_digest"')
-abort 'candidate step must resolve exact amd64 and arm64 manifest digests' unless candidate_run.include?('imagetools inspect --raw "$IMAGE@$local_digest"') && candidate_run.include?('candidate-index.json') && candidate_run.include?('for architecture in amd64 arm64') && candidate_run.include?('${architecture}_digest=$platform_digest')
+abort 'candidate step must verify the local OCI root blob' unless candidate_run.include?('tar -xOf "$OCI_ARCHIVE" index.json') && candidate_run.include?('root_digest') && candidate_run.include?('blob_digest') && candidate_run.include?('local_index_json')
+abort 'candidate digest must be the immutable registry root' unless candidate_run.include?('remote_digest') && candidate_run.include?('echo "digest=$remote_digest"')
+abort 'candidate root must contain exactly linux/amd64 and linux/arm64 images' unless candidate_run.include?('remote platform set mismatch') && candidate_run.include?('($images | length == 2)') && candidate_run.include?('[["linux", "amd64"], ["linux", "arm64"]]')
+abort 'candidate step must bind exact registry platforms to the verified local OCI archive' unless candidate_run.include?('imagetools inspect --raw "$IMAGE@$remote_digest"') && candidate_run.include?('candidate-index.json') && candidate_run.include?('for architecture in amd64 arm64') && candidate_run.include?('local_platform_digest') && candidate_run.include?('platform_digest') && candidate_run.include?('platform_digest" = "$local_platform_digest"') && candidate_run.include?('${architecture}_digest=$platform_digest')
 abort 'candidate platform index must not be read through its mutable tag' if candidate_run.include?('imagetools inspect --raw "$CANDIDATE"')
 
 attest = step(steps, 'attest')
@@ -173,7 +175,10 @@ abort 'keyless digest signing missing' unless sign['run'].to_s.include?('cosign 
 abort 'signature must bind the candidate digest' unless sign.dig('env', 'DIGEST') == '${{ steps.candidate.outputs.digest }}'
 
 verify_candidate = step(steps, 'verify_candidate')
-abort 'candidate signature/evidence verification missing' unless verify_candidate['run'].to_s.include?('scripts/verify-release.sh remote "$CANDIDATE"')
+abort 'candidate signature/evidence verification must use the immutable root' unless verify_candidate['run'].to_s.include?('scripts/verify-release.sh remote-candidate "$IMAGE@$DIGEST"')
+
+verifier_source = File.read(File.join(File.dirname(dockerfile_path), 'scripts/verify-release.sh'))
+abort 'immutable pre-promotion verification mode missing' unless verifier_source.include?('remote-candidate)') && verifier_source.include?('[[ "$subject" =~ ^ghcr\\.io/araihu/dex@sha256:')
 
 promote = step(steps, 'promote')
 promote_run = promote['run'].to_s
@@ -276,7 +281,9 @@ assert_workflow_rejected trivy_sarif_severity 'limit-severities-for-sarif: true'
 assert_workflow_rejected trivy_ignore_unfixed 'ignore-unfixed: true' 'ignore-unfixed: false'
 assert_workflow_rejected trivy_amd64_subject 'image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}' 'image-ref: araihu-dex-release:${{ github.sha }}'
 assert_workflow_rejected trivy_arm64_subject 'image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}' 'image-ref: araihu-dex-release:${{ github.sha }}-arm64'
-assert_workflow_rejected candidate_index_subject 'imagetools inspect --raw "$IMAGE@$local_digest"' 'imagetools inspect --raw "$CANDIDATE"'
+assert_workflow_rejected candidate_index_subject 'imagetools inspect --raw "$IMAGE@$remote_digest"' 'imagetools inspect --raw "$CANDIDATE"'
+assert_workflow_rejected candidate_platform_set '($images | length == 2)' 'true'
+assert_workflow_rejected candidate_platform_binding '[[ "$platform_digest" = "$local_platform_digest" ]]' 'true # platform binding omitted'
 assert_workflow_rejected license_label 'Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause' 'Apache-2.0 AND MIT AND OFL-1.1'
 assert_workflow_rejected evidence_directory 'mkdir -p release-evidence' 'true # evidence directory omitted'
 assert_workflow_rejected multiarch_platform '--platform "$PLATFORMS"' '--platform linux/amd64'

@@ -30,9 +30,11 @@ jobs:
           test -n "$node_version"
           test -n "$npm_version"
           test -n "$actionlint_version"
-          echo "node=$node_version" >> "$GITHUB_OUTPUT"
-          echo "npm=$npm_version" >> "$GITHUB_OUTPUT"
-          echo "actionlint=$actionlint_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "node=$node_version"
+            echo "npm=$npm_version"
+            echo "actionlint=$actionlint_version"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

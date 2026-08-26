@@ -155,7 +155,7 @@ screenshot evidence.
 
 The OCI creation label and `SOURCE_DATE_EPOCH` come from the release commit's
 committer timestamp, so rerunning a release for the same source does not add a
-wall-clock value. Trivy 0.74.0 is a fail-closed `HIGH,CRITICAL` gate; it ignores
+wall-clock value. Trivy v0.74.0 is a fail-closed `HIGH,CRITICAL` gate; it ignores
 only unfixed findings (`ignore-unfixed: true`), limits SARIF to those
 severities, scans both architecture-specific manifests of the exact published
 candidate digest, and retains both reports as evidence.

@@ -299,7 +299,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}
-          version: 0.74.0
+          version: v0.74.0
           format: sarif
           output: release-evidence/vulnerability-report-amd64.sarif
           exit-code: '1'
@@ -312,7 +312,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.arm64_digest }}
-          version: 0.74.0
+          version: v0.74.0
           format: sarif
           output: release-evidence/vulnerability-report-arm64.sarif
           exit-code: '1'

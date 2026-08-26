@@ -110,7 +110,7 @@ abort 'pre-login multi-architecture gate must carry provenance and SBOM' unless 
 
 scan = step(steps, 'scan')
 abort 'vulnerability scan action missing' unless scan['uses'].start_with?('aquasecurity/trivy-action@')
-abort 'Trivy version must be deterministic' unless scan.dig('with', 'version') == '0.74.0'
+abort 'Trivy version must be deterministic' unless scan.dig('with', 'version') == 'v0.74.0'
 abort 'amd64 scan must target the exact published platform manifest' unless scan.dig('with', 'image-ref') == '${{ env.IMAGE }}@${{ steps.candidate.outputs.amd64_digest }}'
 abort 'scan report must be retained as SARIF' unless scan.dig('with', 'format') == 'sarif' && scan.dig('with', 'output') == 'release-evidence/vulnerability-report-amd64.sarif'
 abort 'Trivy gate must fail on selected vulnerabilities' unless scan.dig('with', 'exit-code') == '1'

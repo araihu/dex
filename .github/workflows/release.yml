@@ -74,8 +74,8 @@ jobs:
             echo 'tags<<ARAIHU_TAGS'
             printf '%s\n' \
               "$image:$version" \
-              "$image:$major.$minor" \
-              "$image:$major" \
+              "$image:v$major.$minor" \
+              "$image:v$major" \
               "$image:latest"
             echo 'ARAIHU_TAGS'
             echo 'labels<<ARAIHU_LABELS'

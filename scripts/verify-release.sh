@@ -445,8 +445,8 @@ PY
 
 	expected_refs=(
 			"$image:$version"
-			"$image:$major.$minor"
-			"$image:$major"
+			"$image:v$major.$minor"
+			"$image:v$major"
 			"$image:latest"
 		)
 		candidate_subject=false

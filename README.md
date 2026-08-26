@@ -139,7 +139,7 @@ and grants no merge, release, publication, or deployment authority.
 ## Prepared release workflow
 
 The release workflow accepts only canonical stable `vX.Y.Z` tag
-pushes. It publishes only `ghcr.io/araihu/dex` with `vX.Y.Z`, `X.Y`, `X`, and
+pushes. It publishes only `ghcr.io/araihu/dex` with `vX.Y.Z`, `vX.Y`, `vX`, and
 `latest`; prerelease, `master`, `edge`, and pull-request tags are rejected. Its
 release image is exactly `linux/amd64` and carries locked source and license
 labels. Before registry login it reruns trust, generation, policy, real-image,

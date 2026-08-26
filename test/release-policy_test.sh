@@ -311,8 +311,8 @@ sed -n '/^tags<<ARAIHU_TAGS$/,/^ARAIHU_TAGS$/p' "$state/release-output" |
 	sed '1d;$d' > "$state/tags"
 cat > "$state/expected-tags" <<'EOF'
 ghcr.io/araihu/dex:v1.2.3
-ghcr.io/araihu/dex:1.2
-ghcr.io/araihu/dex:1
+ghcr.io/araihu/dex:v1.2
+ghcr.io/araihu/dex:v1
 ghcr.io/araihu/dex:latest
 EOF
 cmp "$state/expected-tags" "$state/tags" || die 'stable release tag mapping mismatch'

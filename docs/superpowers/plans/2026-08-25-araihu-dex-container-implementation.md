@@ -15,6 +15,11 @@
 > with builds from their exact upstream revisions and fixed dependencies. No
 > Dex authentication source file is patched.
 
+> **Password-profile amendment (2026-08-27):** The preceding sentence and
+> source/API constraints are superseded only for the additive local-password
+> profile extension documented in the README. Its source overlay is guarded by
+> exact upstream preimage hashes and container-level gRPC acceptance.
+
 **Goal:** Build and verify an AraiHu-branded overlay image at `ghcr.io/araihu/dex` while preserving the official Dex `master` authentication frontend and logic.
 
 **Architecture:** Generate deterministic CSS/asset bytes from pinned Goshtoso and AraiHu Assets releases, rebuild the three upstream Go binaries from locked source revisions with Go 1.27.0 and fixed dependencies, copy only shared header/footer and branded static files over a digest-pinned official Dex image, then validate `ARAIHU_DEX_THEME` in a minimal shell entrypoint before delegating to the rebuilt upstream entrypoint. The implementation never vendors or overrides flow templates. Frontend bytes are reproducible; platform artifacts are identified by digest and verified through SBOM/provenance.

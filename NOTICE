@@ -5,9 +5,11 @@ This repository contains an Apache License 2.0-licensed overlay for Dex.
 
 Dex is Copyright The Dex Authors and licensed under the Apache License 2.0.
 The overlay uses the official Dex container as its upstream base and rebuilds
-the exact locked Dex source with Go 1.27.0; Dex remains
-responsible for authentication, storage, connector, session, MFA, API, and
-protocol behavior.
+the exact locked Dex source with Go 1.27.0. A bounded AraiHu source overlay
+adds local-password profile fields to Dex's existing protobuf API and maps
+them to fields already implemented by Dex storage and authentication code.
+Dex remains responsible for authentication, storage, connector, session, MFA,
+and protocol behavior.
 
 Gomplate is Copyright Dave Henderson and contributors and licensed under the
 MIT License. The image rebuilds the exact locked gomplate source with patched
@@ -37,6 +39,6 @@ exact released materials included in that artifact.
 
 Release images declare the SPDX license expression
 `Apache-2.0 AND MIT AND OFL-1.1 AND BSD-3-Clause`. Their
-SPDX JSON SBOM, provenance, attestations, and signatures identify the exact
-artifact and included materials; they do not replace this notice or change any
-component's license terms.
+immutable digest, retained scan evidence, and signature identify the exact
+artifact; they do not replace this notice or change any component's license
+terms.

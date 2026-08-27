@@ -1,16 +1,21 @@
 # AraiHu Dex
 
-AraiHu-maintained frontend overlay for a locked official Dex prerelease image.
-It preserves Dex authentication behavior, native branding hooks, flow
-templates, TOTP, and WebAuthn logic while adding released Goshtoso themes and
-optional AraiHu assets. The final stage remains based on the official image,
-but rebuilds its Dex, entrypoint, and gomplate binaries with Go 1.27.0 to avoid
-vulnerabilities detected in the original toolchain build.
+AraiHu-maintained overlay for a locked official Dex prerelease image. It
+preserves Dex authentication behavior, native branding hooks, flow templates,
+TOTP, and WebAuthn logic while adding released Goshtoso themes, optional AraiHu
+assets, and the bounded local-password profile API described below. The final
+stage remains based on the official image, but rebuilds its Dex, entrypoint,
+and gomplate binaries with Go 1.27.0 to avoid vulnerabilities detected in the
+original toolchain build.
 
-The approved design and implementation plan are in:
+The original frontend design and implementation plan are in:
 
 - [`docs/superpowers/specs/2026-08-25-araihu-dex-container-design.md`](docs/superpowers/specs/2026-08-25-araihu-dex-container-design.md)
 - [`docs/superpowers/plans/2026-08-25-araihu-dex-container-implementation.md`](docs/superpowers/plans/2026-08-25-araihu-dex-container-implementation.md)
+
+Their source/API non-goals were superseded on 2026-08-27 only for the bounded
+local-password profile extension documented here. Frontend and authentication
+logic boundaries remain unchanged.
 
 ## Lifecycle gates
 
@@ -60,13 +65,45 @@ verified `master` commit and digest, reads the official
 with the digest as the lock. It never follows the mutable tag in the
 Dockerfile.
 
-Dex and its entrypoint are rebuilt from that exact source archive. Gomplate is
-rebuilt from its exact `v5.2.0` commit. Neither source tree carries an AraiHu
-patch; only dependencies with published fixes are raised before compilation.
-The image carries the Go, musl, gomplate, and downloaded Go-module license
+Dex and its entrypoint are rebuilt from that exact source archive. Before
+compilation, [`scripts/prepare-dex-source.sh`](scripts/prepare-dex-source.sh)
+replaces only Dex's `api/v2` module and `server/apiserver/passwords.go` with
+the reviewed repository copies. It first verifies the exact upstream preimage
+of every replaced file, so a Dex update fails closed until the extension is
+rebased and reviewed. Gomplate is rebuilt unmodified from its exact
+`v5.2.0` commit. Dependencies with published fixes are raised as before. The
+image carries the Go, musl, gomplate, and downloaded Go-module license
 inventory used by those static binaries.
 To restore the original binaries, run the pinned official image directly.
-Setting `DEX_FRONTEND_DIR` empty restores only its embedded frontend.
+That rollback also removes the AraiHu password-profile RPC fields. Setting
+`DEX_FRONTEND_DIR` empty restores only Dex's embedded frontend and does not
+change the API binary.
+
+## Local-password profile API
+
+The consumable client module is `github.com/araihu/dex/api/v2`. Its protobuf
+package and gRPC service remain `api` and `api.Dex`. Existing `Password` wire
+fields retain numbers 1 through 4; additive fields are `name = 5`,
+`preferred_username = 6`, optional `email_verified = 7`, and `groups = 8`.
+The matching additive update fields use numbers 4 through 7.
+
+Create and list map these fields directly to `storage.Password`. Omitting
+`email_verified` preserves Dex's legacy `nil` storage value, which the local
+connector resolves to `true`; explicitly sending `false` remains distinct.
+Update uses protobuf presence for name, preferred username, and email
+verification. `PasswordGroups` distinguishes no groups update from clearing
+all groups. Existing hash, email, username, and user-ID behavior remains
+unchanged, and list still omits password hashes.
+
+This is protobuf wire-compatible with existing clients: old clients retain
+their current behavior and ignore added response fields. New profile-aware
+clients must require an AraiHu image containing this extension; an official
+Dex server can ignore unknown create/update fields. Dex's numeric API version
+remains 4 because no RPC was added. The fail-closed runtime tuple is
+`GetVersion.server = v2.46.0-20260806171424-ab64ed77+araihu.password-profile.v1`
+and `GetVersion.api = 4`; profile-aware operators must require both exact
+values. The pinned official image reports the same API number but the upstream
+server version without the AraiHu build metadata, so it is rejected.
 
 The overlay keeps Dex's native logo and favicon by default. Its header still
 uses Dex's `logo` value, so `frontend.logoURL` continues to work from the
@@ -83,8 +120,9 @@ The entrypoint renders that file from a root-owned template on every start.
 
 ## CI and upstream updates
 
-Pull requests and `main` pushes run source, generation, shell, Node,
-multi-architecture build, filesystem-overlay, real-image, visual,
+Pull requests and `main` pushes run source, protobuf compatibility,
+gRPC/storage round-trip, container gRPC acceptance, token-claim, generation,
+shell, Node, multi-architecture build, filesystem-overlay, real-image, visual,
 accessibility, and vulnerability checks. CI builds only into the local Docker
 daemon, OCI files, and local BuildKit caches. It has no registry login, image
 publication, tag, attestation generation, or signing step.

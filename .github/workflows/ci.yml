@@ -77,6 +77,7 @@ jobs:
         run: |
           sh test/fetch-sources_test.sh
           sh test/entrypoint_test.sh
+          sh test/dex-source-overlay_test.sh
           sh test/update-lock_test.sh
           GOWORK=off go run github.com/rhysd/actionlint/cmd/actionlint@${{ steps.versions.outputs.actionlint }}
 
@@ -107,6 +108,12 @@ jobs:
       - name: Record local image ID
         id: image
         run: echo "id=$(cat /tmp/araihu-dex-amd64.iid)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify runtime identity
+        run: sh test/runtime-identity_test.sh "${{ steps.image.outputs.id }}"
+
+      - name: Verify runtime password profile API
+        run: sh test/runtime-api_test.sh "${{ steps.image.outputs.id }}"
 
       - name: Verify filesystem overlay
         run: sh test/image-overlay_test.sh "${{ steps.image.outputs.id }}"

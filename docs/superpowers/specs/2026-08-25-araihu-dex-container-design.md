@@ -5,6 +5,11 @@
 **Target repository:** `/Users/guilhermecastro/repos/araihu/dex`  
 **Target image:** `ghcr.io/araihu/dex`
 
+> **Password-profile amendment (2026-08-27):** The API/source non-goals below
+> are superseded only for the additive, wire-compatible local-password fields
+> documented in the repository README. The overlay remains pinned, verifies
+> source preimages before patching, and does not change authentication logic.
+
 ## Summary
 
 Create an AraiHu-maintained frontend overlay on the official Dex prerelease container for

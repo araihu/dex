@@ -129,6 +129,7 @@ jobs:
           sh test/release-policy_test.sh
           sh test/fetch-sources_test.sh
           sh test/entrypoint_test.sh
+          sh test/dex-source-overlay_test.sh
           sh test/update-lock_test.sh
           GOWORK=off go run github.com/rhysd/actionlint/cmd/actionlint@${{ steps.release.outputs.actionlint }}
           npm test
@@ -161,6 +162,8 @@ jobs:
         env:
           LOCAL_IMAGE: araihu-dex-release:${{ github.sha }}
         run: |
+          sh test/runtime-identity_test.sh "$LOCAL_IMAGE"
+          sh test/runtime-api_test.sh "$LOCAL_IMAGE"
           sh test/image-overlay_test.sh "$LOCAL_IMAGE"
           scripts/test-image.sh "$LOCAL_IMAGE"
 

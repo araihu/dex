@@ -90,6 +90,15 @@ done <"$tmp/added.paths"
 	[ -f "$tmp/derived/${path#./}" ] || continue
 	if ! cmp -s "$tmp/upstream/${path#./}" "$tmp/derived/${path#./}"; then
 		case "$path" in
+			./etc/apk/world|\
+			./lib/apk/db/installed|\
+			./usr/lib/engines-3/afalg.so|\
+			./usr/lib/engines-3/capi.so|\
+			./usr/lib/engines-3/loader_attic.so|\
+			./usr/lib/engines-3/padlock.so|\
+			./usr/lib/libcrypto.so.3|\
+			./usr/lib/libssl.so.3|\
+			./usr/lib/ossl-modules/legacy.so|\
 			./srv/dex/web/templates/header.html|\
 			./srv/dex/web/templates/footer.html|\
 			./usr/local/bin/dex|\
@@ -168,6 +177,9 @@ done
 	fail 'derived image entrypoint changed'
 [ "$(docker image inspect "$image" --format '{{json .Config.Cmd}}')" = '["dex","serve","/etc/dex/config.docker.yaml"]' ] ||
 	fail 'upstream CMD was not preserved'
+docker run --rm --user 0 --entrypoint /sbin/apk "$image" info -e \
+	'libcrypto3=3.5.8-r0' 'libssl3=3.5.8-r0' >/dev/null ||
+	fail 'pinned OpenSSL security update is missing'
 frontend_env=$(docker image inspect "$image" --format '{{range .Config.Env}}{{println .}}{{end}}' |
 	sed -n '/^DEX_FRONTEND_DIR=/p')
 [ "$frontend_env" = 'DEX_FRONTEND_DIR=/srv/dex/web' ] ||

@@ -11,6 +11,11 @@ RUN . /tmp/versions.env \
     && mkdir -p /usr/local/src/dex \
     && tar -xzf /tmp/dex.tar.gz --strip-components=1 -C /usr/local/src/dex
 
+COPY api/v2 /tmp/araihu-source-overlay/api/v2
+COPY dex/server/apiserver/passwords.go /tmp/araihu-source-overlay/dex/server/apiserver/passwords.go
+COPY scripts/prepare-dex-source.sh /tmp/araihu-source-overlay/scripts/prepare-dex-source.sh
+RUN /tmp/araihu-source-overlay/scripts/prepare-dex-source.sh /usr/local/src/dex
+
 WORKDIR /usr/local/src/dex
 ENV GOTOOLCHAIN=local
 RUN . /tmp/versions.env \
@@ -23,6 +28,7 @@ RUN . /tmp/versions.env \
 RUN . /tmp/versions.env \
     && dex_version=${DEX_IMAGE#*:} \
     && dex_version=${dex_version%@*} \
+    && dex_version=$dex_version+araihu.password-profile.v1 \
     && CGO_ENABLED=1 GOFLAGS=-trimpath GOWORK=off go build \
       -ldflags "-w -X main.version=$dex_version -extldflags '-static'" \
       -o /go/bin/dex ./cmd/dex \
@@ -61,6 +67,10 @@ RUN mkdir -p /tmp/go-licenses/go-modules \
       > /tmp/go-licenses/go-module-licenses.sha256
 
 FROM upstream
+
+USER 0
+RUN apk add --upgrade --no-cache 'libcrypto3=3.5.8-r0' 'libssl3=3.5.8-r0' \
+    && rm -f /lib/apk/db/lock /var/log/apk.log
 
 COPY --from=builder /go/bin/dex /go/bin/docker-entrypoint /go/bin/gomplate /usr/local/bin/
 COPY --from=builder /usr/local/src/dex/go.mod /usr/local/src/dex/go.sum /usr/local/src/dex/

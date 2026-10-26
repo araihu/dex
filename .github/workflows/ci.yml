@@ -95,15 +95,6 @@ jobs:
             --cache-to type=local,dest=/tmp/araihu-dex-cache-amd64,mode=max \
             .
 
-      - name: Build arm64 image locally
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            --output type=oci,dest=/tmp/araihu-dex-arm64.oci.tar \
-            --cache-from type=local,src=/tmp/araihu-dex-cache-amd64 \
-            --cache-to type=local,dest=/tmp/araihu-dex-cache-arm64,mode=max \
-            .
-
       - name: Record local image ID
         id: image
         run: echo "id=$(cat /tmp/araihu-dex-amd64.iid)" >> "$GITHUB_OUTPUT"
@@ -133,3 +124,29 @@ jobs:
             web/manifest.sha256
           if-no-files-found: warn
           retention-days: 14
+
+  build-arm64:
+    name: Build arm64 image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Fetch verified build sources
+        run: scripts/fetch-sources.sh
+
+      - name: Build arm64 image natively
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --output type=oci,dest=/tmp/araihu-dex-arm64.oci.tar \
+            .

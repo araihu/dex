@@ -1,6 +1,6 @@
 FROM ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b AS upstream
 
-FROM golang:1.27.0-alpine3.24@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
+FROM golang:1.27.3-alpine3.24@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS builder
 
 RUN apk add --no-cache build-base ca-certificates
 
@@ -14,7 +14,7 @@ RUN . /tmp/versions.env \
 WORKDIR /usr/local/src/dex
 ENV GOTOOLCHAIN=local
 RUN . /tmp/versions.env \
-    && test "$(go env GOVERSION)" = go1.27.0 \
+    && test "$(go env GOVERSION)" = go1.27.3 \
     && GOWORK=off go get "golang.org/x/mod@$DEX_X_MOD_VERSION" \
     && GOWORK=off go mod tidy \
     && cd api/v2 \

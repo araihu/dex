@@ -5,7 +5,7 @@ This repository contains an Apache License 2.0-licensed overlay for Dex.
 
 Dex is Copyright The Dex Authors and licensed under the Apache License 2.0.
 The overlay uses the official Dex container as its upstream base and rebuilds
-the exact locked Dex source with Go 1.27.0; Dex remains
+the exact locked Dex source with Go 1.27.3; Dex remains
 responsible for authentication, storage, connector, session, MFA, API, and
 protocol behavior.
 

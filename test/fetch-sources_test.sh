@@ -95,6 +95,8 @@ write_lock() {
 	sums_url=$6
 	sums_digest=$7
 	sed \
+		-e 's|^DEX_BASE_X_MOD_VERSION=.*|DEX_BASE_X_MOD_VERSION=v0.37.0|' \
+		-e 's|^DEX_BASE_API_GRPC_VERSION=.*|DEX_BASE_API_GRPC_VERSION=v1.82.0|' \
 		-e "s|^DEX_SOURCE_URL=.*|DEX_SOURCE_URL=$dex_url|" \
 		-e "s|^DEX_SOURCE_SHA256=.*|DEX_SOURCE_SHA256=$dex_digest|" \
 		-e "s|^ASSETS_ARCHIVE_URL=.*|ASSETS_ARCHIVE_URL=$assets_url|" \

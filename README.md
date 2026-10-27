@@ -128,13 +128,19 @@ job-scoped `${{ github.token }}` and `persist-credentials: false`, so private
 repositories work without retaining credentials. Cosign trust verification
 remains public and token-free. A second `contents: read` job downloads the
 immutable artifact ID and validates its checksums, exact base/result, patch,
-path allowlist, and report/lock consistency. Only after that validation succeeds
-can a separate write-scoped job start. It downloads the immutable-ID artifact
-and rechecks the full artifact/base/hash/path/report binding before checkout,
-then checks out without persisted credentials, applies and rechecks the patch,
-configures Git credentials, and creates the update branch and pull request with
-GitHub's token and `gh`. A pull request still requires human screenshot review
-and grants no merge, release, publication, or deployment authority.
+path allowlist, and report/lock consistency. A native ARM64 job then applies the
+exact validated patch, acquires its checksum-verified build sources, and builds
+the candidate image. After both validation and the native build succeed, a
+read-only publisher rechecks the full artifact/base/hash/path/report binding
+and retains `validated-dex-update-RUN_ID-ATTEMPT` for 14 days. Its run summary
+links to the patch, report, manifest and metadata.
+
+Download that artifact, check out the `base_commit` recorded in `metadata.env`,
+apply `prepared-update.patch`, review the changes and screenshots, and open a
+pull request manually. The workflow has no repository write permission and
+creates no branches or pull requests. The organization's Actions policy remains
+unchanged. A proposal grants no merge, release, image publication, or deployment
+authority.
 
 ## Prepared release workflow
 

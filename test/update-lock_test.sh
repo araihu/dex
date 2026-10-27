@@ -515,7 +515,7 @@ sed -n '/^  verify-arm64:/,/^  publish:/p' "$update_workflow" >"$arm64_job"
 sed -n '/^  publish:/,$p' "$update_workflow" >"$publish_job"
 sed -n '/- name: Check out repository without persisted credentials/,/- name: Read locked tool versions/p' "$verify_job" >"$verify_checkout"
 sed -n '/- name: Check out verified base without persisted credentials/,/- name: Download verified prepared update/p' "$validate_job" >"$validate_checkout"
-sed -n '/- name: Pre-check immutable artifact binding/,/- name: Check out validated base without persisted credentials/p' "$publish_job" >"$publish_precheck"
+sed -n '/- name: Pre-check immutable artifact binding/,/- name: Upload validated update artifact/p' "$publish_job" >"$publish_precheck"
 
 grep -Fx 'permissions: {}' "$update_workflow" >/dev/null ||
 	fail 'update workflow must deny permissions by default'
@@ -558,14 +558,15 @@ grep -F 'needs: [verify, validate]' "$arm64_job" >/dev/null &&
 if grep -E ': write|GH_TOKEN|gh auth setup-git|git push|gh pr create' "$arm64_job" >/dev/null; then
     fail 'native arm64 job has write authority or lifecycle commands'
 fi
-grep -F 'contents: write' "$publish_job" >/dev/null ||
-	fail 'update publisher lacks contents write permission'
-grep -F 'pull-requests: write' "$publish_job" >/dev/null ||
-	fail 'update publisher lacks pull-request write permission'
+grep -F 'contents: read' "$publish_job" >/dev/null ||
+    fail 'validated artifact publisher lacks read-only contents permission'
+if grep -E ': write|GH_TOKEN|gh auth setup-git|git push|gh pr create' "$update_workflow" >/dev/null; then
+    fail 'upstream artifact workflow has repository write authority or lifecycle commands'
+fi
 
 checkout_count=$(grep -c 'uses: actions/checkout@' "$update_workflow")
 nonpersistent_checkout_count=$(grep -c 'persist-credentials: false' "$update_workflow")
-[ "$checkout_count" -eq 4 ] || fail 'update workflow must check out once per isolated job'
+[ "$checkout_count" -eq 3 ] || fail 'update workflow must check out once per isolated job'
 [ "$nonpersistent_checkout_count" -eq "$checkout_count" ] ||
 	fail 'every update checkout must disable persisted credentials'
 
@@ -589,35 +590,21 @@ grep -F 'unexpected prepared path' "$validate_job" >/dev/null ||
 	fail 'artifact validator lacks the prepared-path allowlist'
 grep -F 'binding_sha256' "$validate_job" >/dev/null ||
 	fail 'artifact validator does not emit a bound validation result'
-grep -F 'Apply and recheck validated patch' "$publish_job" >/dev/null ||
-	fail 'publisher does not recheck the applied patch'
 grep -F 'Pre-check immutable artifact binding' "$publish_job" >/dev/null ||
-	fail 'publisher does not pre-check the immutable artifact binding'
-grep -F 'ref: ${{ needs.validate.outputs.base_commit }}' "$publish_job" >/dev/null ||
-	fail 'publisher checkout is not bound to the read-only validation result'
+    fail 'publisher does not pre-check the immutable artifact binding'
 grep -F 'artifact-ids: ${{ needs.validate.outputs.artifact_id }}' "$publish_job" >/dev/null ||
-	fail 'publisher download is not bound to the validated artifact ID'
+    fail 'publisher download is not bound to the validated artifact ID'
+grep -F 'uses: actions/upload-artifact@' "$publish_job" >/dev/null &&
+    grep -F 'retention-days: 14' "$publish_job" >/dev/null &&
+    grep -F 'GITHUB_STEP_SUMMARY' "$publish_job" >/dev/null ||
+    fail 'publisher does not retain and summarize the validated proposal'
 
-validation_job_line=$(grep -n -x '  validate:' "$update_workflow" | cut -d: -f1)
-publish_job_line=$(grep -n -x '  publish:' "$update_workflow" | cut -d: -f1)
-validation_line=$(grep -n -F -- '- name: Validate prepared update' "$validate_job" | cut -d: -f1)
 download_line=$(grep -n -F -- '- name: Download validated prepared update' "$publish_job" | cut -d: -f1)
 precheck_line=$(grep -n -F -- '- name: Pre-check immutable artifact binding' "$publish_job" | cut -d: -f1)
-checkout_line=$(grep -n -F -- '- name: Check out validated base without persisted credentials' "$publish_job" | cut -d: -f1)
-recheck_line=$(grep -n -F -- '- name: Apply and recheck validated patch' "$publish_job" | cut -d: -f1)
-credential_line=$(grep -n -F -- '- name: Configure write credentials' "$publish_job" | cut -d: -f1)
-branch_line=$(grep -n -F -- '- name: Create and push update branch' "$publish_job" | cut -d: -f1)
-[ -n "$validation_job_line" ] && [ -n "$publish_job_line" ] &&
-	[ "$validation_job_line" -lt "$publish_job_line" ] ||
-	fail 'write-permission job exists before read-only artifact validation'
-[ -n "$validation_line" ] && [ -n "$download_line" ] && [ -n "$precheck_line" ] &&
-	[ -n "$checkout_line" ] && [ -n "$recheck_line" ] && [ -n "$credential_line" ] &&
-	[ -n "$branch_line" ] ||
-	fail 'update publisher lifecycle steps are incomplete'
-[ "$download_line" -lt "$precheck_line" ] && [ "$precheck_line" -lt "$checkout_line" ] &&
-	[ "$checkout_line" -lt "$recheck_line" ] && [ "$recheck_line" -lt "$credential_line" ] &&
-	[ "$credential_line" -lt "$branch_line" ] ||
-	fail 'publisher checkout, patch application, or credentials precede required binding gates'
+upload_line=$(grep -n -F -- '- name: Upload validated update artifact' "$publish_job" | cut -d: -f1)
+[ -n "$download_line" ] && [ -n "$precheck_line" ] && [ -n "$upload_line" ] &&
+    [ "$download_line" -lt "$precheck_line" ] && [ "$precheck_line" -lt "$upload_line" ] ||
+    fail 'validated artifact publication precedes the immutable binding gate'
 grep -F 'EXPECTED_ARTIFACT_ID' "$publish_precheck" >/dev/null &&
 	grep -F 'EXPECTED_BASE_COMMIT' "$publish_precheck" >/dev/null &&
 	grep -F 'EXPECTED_BINDING_SHA256' "$publish_precheck" >/dev/null &&
@@ -626,7 +613,7 @@ grep -F 'EXPECTED_ARTIFACT_ID' "$publish_precheck" >/dev/null &&
 	grep -F 'sha256sum "$report"' "$publish_precheck" >/dev/null &&
 	grep -F 'sha256sum "$manifest"' "$publish_precheck" >/dev/null &&
 	grep -F 'git apply --numstat -z "$patch" > "$numstat"' "$publish_precheck" >/dev/null &&
-	grep -F 'unexpected prepared path before checkout' "$publish_precheck" >/dev/null &&
+	grep -F 'unexpected prepared path before publication' "$publish_precheck" >/dev/null &&
 	grep -F -- '- New commit:' "$publish_precheck" >/dev/null &&
 	grep -F -- '- New digest:' "$publish_precheck" >/dev/null &&
 	grep -F -- '- Generated manifest digest:' "$publish_precheck" >/dev/null ||

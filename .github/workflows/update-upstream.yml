@@ -496,7 +496,9 @@ jobs:
           ARTIFACT_URL: ${{ steps.validated_artifact.outputs.artifact-url }}
         run: |
           set -euo pipefail
-          cat "$RUNNER_TEMP/prepared-update/update-report.md" >> "$GITHUB_STEP_SUMMARY"
-          printf '\nValidated with AMD64 image acceptance and a native ARM64 build.\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '\n[Download the validated patch and report](%s)\n' "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
-          printf '\nApply prepared-update.patch to the base_commit recorded in metadata.env, review the changes and screenshots, then open a pull request manually.\n' >> "$GITHUB_STEP_SUMMARY"
+          {
+            cat "$RUNNER_TEMP/prepared-update/update-report.md"
+            printf '\nValidated with AMD64 image acceptance and a native ARM64 build.\n'
+            printf '\n[Download the validated patch and report](%s)\n' "$ARTIFACT_URL"
+            printf '\nApply prepared-update.patch to the base_commit recorded in metadata.env, review the changes and screenshots, then open a pull request manually.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

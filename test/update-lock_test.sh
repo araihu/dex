@@ -276,6 +276,17 @@ header overlay'
 expect_failure "$case_dir" 'Dex image version label is missing or inconsistent' \
 	env FIXTURE_VERSION=v2.46.0
 
+case_dir=$(make_case master-version-label)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+run_update "$case_dir" env FIXTURE_VERSION=master
+grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/versions.env" >/dev/null ||
+    fail 'master image was not pinned by digest'
+grep -F "docker buildx imagetools inspect ghcr.io/dexidp/dex@$new_digest --format {{json .Image}}" "$case_dir/commands.log" >/dev/null ||
+    fail 'image labels were not read from the resolved immutable digest'
+
 case_dir=$(make_case inventory-change)
 make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
 make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";' unexpected.html

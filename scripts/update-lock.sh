@@ -284,7 +284,7 @@ resolved_digest=$(printf '%s\n' "$manifest_json" | jq -er '.digest') ||
 	die 'Dex image did not resolve to a digest'
 if [ "$mode" = update ]; then
 		new_digest=$resolved_digest
-		image_json=$(docker buildx imagetools inspect "$manifest_ref" --format '{{json .Image}}') ||
+		image_json=$(docker buildx imagetools inspect "$official_image_repository@$new_digest" --format '{{json .Image}}') ||
 			die 'cannot inspect Dex image version metadata'
 		new_version=$(printf '%s\n' "$image_json" | jq -er '
 			if type != "object" or (has("linux/amd64") | not) or (has("linux/arm64") | not) then
@@ -295,7 +295,7 @@ if [ "$mode" = update ]; then
 					.["linux/arm64"].config.Labels["org.opencontainers.image.version"] // empty
 				] as $versions
 				| if ($versions | length) == 2
-					and all($versions[]; type == "string" and test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-[0-9]{14}-[0-9a-f]{8}$"))
+					and all($versions[]; type == "string" and (. == "master" or test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-[0-9]{14}-[0-9a-f]{8}$")))
 					and $versions[0] == $versions[1]
 				then $versions[0]
 				else empty

@@ -110,8 +110,8 @@ assert_go_build() {
 	version=$3
 	build_info=$(go version -m "$tmp/derived/usr/local/bin/$binary") ||
 		fail "$binary does not expose Go build information"
-	printf '%s\n' "$build_info" | grep -F ': go1.27.0' >/dev/null ||
-		fail "$binary was not compiled with Go 1.27.0"
+	printf '%s\n' "$build_info" | grep -F ': go1.27.3' >/dev/null ||
+		fail "$binary was not compiled with Go 1.27.3"
 	if [ -n "$module" ]; then
 		printf '%s\n' "$build_info" |
 			awk -F '\t' -v module="$module" -v version="$version" \

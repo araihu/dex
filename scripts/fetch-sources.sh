@@ -494,7 +494,7 @@ dex_stage=
 cat >"$catalog_work/go.mod" <<EOF
 module araihu-dex-catalog
 
-go 1.27
+go 1.27.3
 
 require $GOSHTOSO_MODULE $GOSHTOSO_VERSION
 EOF

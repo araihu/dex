@@ -4,7 +4,7 @@ AraiHu-maintained frontend overlay for a locked official Dex prerelease image.
 It preserves Dex authentication behavior, native branding hooks, flow
 templates, TOTP, and WebAuthn logic while adding released Goshtoso themes and
 optional AraiHu assets. The final stage remains based on the official image,
-but rebuilds its Dex, entrypoint, and gomplate binaries with Go 1.27.0 to avoid
+but rebuilds its Dex, entrypoint, and gomplate binaries with Go 1.27.3 to avoid
 vulnerabilities detected in the original toolchain build.
 
 The approved design and implementation plan are in:

@@ -504,12 +504,14 @@ update_workflow=$repo/.github/workflows/update-upstream.yml
 ci_workflow=$repo/.github/workflows/ci.yml
 verify_job=$tmp/update-verify-job.yml
 validate_job=$tmp/update-validate-job.yml
+arm64_job=$tmp/update-arm64-job.yml
 publish_job=$tmp/update-publish-job.yml
 verify_checkout=$tmp/update-verify-checkout.yml
 validate_checkout=$tmp/update-validate-checkout.yml
 publish_precheck=$tmp/update-publish-precheck.yml
 sed -n '/^  verify:/,/^  validate:/p' "$update_workflow" >"$verify_job"
-sed -n '/^  validate:/,/^  publish:/p' "$update_workflow" >"$validate_job"
+sed -n '/^  validate:/,/^  verify-arm64:/p' "$update_workflow" >"$validate_job"
+sed -n '/^  verify-arm64:/,/^  publish:/p' "$update_workflow" >"$arm64_job"
 sed -n '/^  publish:/,$p' "$update_workflow" >"$publish_job"
 sed -n '/- name: Check out repository without persisted credentials/,/- name: Read locked tool versions/p' "$verify_job" >"$verify_checkout"
 sed -n '/- name: Check out verified base without persisted credentials/,/- name: Download verified prepared update/p' "$validate_job" >"$validate_checkout"
@@ -538,8 +540,23 @@ if grep -E ': write|GH_TOKEN|gh auth setup-git|git push|gh pr create' "$validate
 fi
 grep -F 'token: ${{ github.token }}' "$validate_checkout" >/dev/null ||
 	fail 'read-only validator checkout does not use its explicit job token'
-grep -F 'needs: validate' "$publish_job" >/dev/null ||
+grep -F 'needs: [validate, verify-arm64]' "$publish_job" >/dev/null ||
 	fail 'update publisher does not depend on read-only artifact validation'
+grep -F "needs.verify-arm64.result == 'success'" "$publish_job" >/dev/null ||
+    fail 'update publisher does not require a successful native arm64 build'
+grep -F 'needs: [verify, validate]' "$arm64_job" >/dev/null &&
+    grep -F 'runs-on: ubuntu-24.04-arm' "$arm64_job" >/dev/null &&
+    grep -F 'contents: read' "$arm64_job" >/dev/null &&
+    grep -F 'artifact-ids: ${{ needs.validate.outputs.artifact_id }}' "$arm64_job" >/dev/null &&
+    grep -F 'ref: ${{ needs.verify.outputs.base_commit }}' "$arm64_job" >/dev/null &&
+    grep -F 'EXPECTED_PATCH_SHA256' "$arm64_job" >/dev/null &&
+    grep -F 'git apply --check' "$arm64_job" >/dev/null &&
+    grep -F 'git apply --index' "$arm64_job" >/dev/null &&
+    grep -F 'docker buildx build --platform linux/arm64 --load' "$arm64_job" >/dev/null ||
+    fail 'native arm64 job is not bound to the validated base and artifact'
+if grep -E ': write|GH_TOKEN|gh auth setup-git|git push|gh pr create' "$arm64_job" >/dev/null; then
+    fail 'native arm64 job has write authority or lifecycle commands'
+fi
 grep -F 'contents: write' "$publish_job" >/dev/null ||
 	fail 'update publisher lacks contents write permission'
 grep -F 'pull-requests: write' "$publish_job" >/dev/null ||
@@ -547,7 +564,7 @@ grep -F 'pull-requests: write' "$publish_job" >/dev/null ||
 
 checkout_count=$(grep -c 'uses: actions/checkout@' "$update_workflow")
 nonpersistent_checkout_count=$(grep -c 'persist-credentials: false' "$update_workflow")
-[ "$checkout_count" -eq 3 ] || fail 'update workflow must check out once per isolated job'
+[ "$checkout_count" -eq 4 ] || fail 'update workflow must check out once per isolated job'
 [ "$nonpersistent_checkout_count" -eq "$checkout_count" ] ||
 	fail 'every update checkout must disable persisted credentials'
 

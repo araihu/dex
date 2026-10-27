@@ -19,6 +19,12 @@ fail() {
 	exit 1
 }
 
+repo=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+dex_x_mod_version=$(awk -F= '
+    $1 == "DEX_X_MOD_VERSION" { value = $2; count++ }
+    END { if (count != 1 || value == "") exit 1; print value }
+' "$repo/versions.env") || fail 'DEX_X_MOD_VERSION must occur exactly once in the lock'
+
 arch=$(docker image inspect "$image" --format '{{.Architecture}}')
 case "$arch" in
 	amd64|arm64) ;;
@@ -120,7 +126,7 @@ assert_go_build() {
 	fi
 }
 
-assert_go_build dex golang.org/x/mod v0.40.0
+assert_go_build dex golang.org/x/mod "$dex_x_mod_version"
 assert_go_build docker-entrypoint '' ''
 assert_go_build gomplate github.com/go-git/go-git/v5 v5.19.2
 gomplate_info=$(go version -m "$tmp/derived/usr/local/bin/gomplate")

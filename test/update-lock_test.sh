@@ -550,6 +550,7 @@ grep -F 'needs: [verify, validate]' "$arm64_job" >/dev/null &&
     grep -F 'artifact-ids: ${{ needs.validate.outputs.artifact_id }}' "$arm64_job" >/dev/null &&
     grep -F 'ref: ${{ needs.verify.outputs.base_commit }}' "$arm64_job" >/dev/null &&
     grep -F 'EXPECTED_PATCH_SHA256' "$arm64_job" >/dev/null &&
+    grep -F 'run: scripts/fetch-sources.sh' "$arm64_job" >/dev/null &&
     grep -F 'git apply --check' "$arm64_job" >/dev/null &&
     grep -F 'git apply --index' "$arm64_job" >/dev/null &&
     grep -F 'docker buildx build --platform linux/arm64 --load' "$arm64_job" >/dev/null ||

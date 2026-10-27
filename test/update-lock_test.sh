@@ -52,7 +52,10 @@ make_archive() {
 	if [ -n "$extra" ]; then
 		printf '%s\n' '<section>unexpected</section>' >"$root/$extra"
 	fi
-	tar -czf "$archive" -C "$tree" "dex-$commit"
+	mkdir -p "$tree/dex-$commit/api/v2"
+    printf 'module github.com/dexidp/dex/v2\nrequire (\n golang.org/x/mod %s\n)\n' "${FIXTURE_SOURCE_X_MOD:-v0.37.0}" > "$tree/dex-$commit/go.mod"
+    printf 'module github.com/dexidp/dex/api/v2\nrequire (\n google.golang.org/grpc %s\n)\n' "${FIXTURE_SOURCE_GRPC:-v1.82.0}" > "$tree/dex-$commit/api/v2/go.mod"
+    tar -czf "$archive" -C "$tree" "dex-$commit"
 }
 
 write_executable() {
@@ -173,6 +176,10 @@ DEX_SERVER_VERSION=$new_version
 DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$locked_commit.tar.gz
 DEX_SOURCE_FILENAME=dex.tar.gz
 DEX_SOURCE_SHA256=$old_archive_hash
+DEX_BASE_X_MOD_VERSION=v0.37.0
+DEX_X_MOD_VERSION=v0.40.0
+DEX_BASE_API_GRPC_VERSION=v1.82.0
+DEX_API_GRPC_VERSION=v1.82.1
 EOF
 	printf 'FROM %s%s\n' "$locked_image" "$from_suffix" >"$root/Dockerfile"
 	printf '%s\n' "$current_header" >"$root/src/header.html"
@@ -275,6 +282,10 @@ grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/versi
 	fail 'branch image was not pinned to its immutable digest'
 grep -Fx "DEX_SERVER_VERSION=$new_version" "$case_dir/repo/versions.env" >/dev/null ||
 	fail 'branch image did not record its exact binary version'
+grep -F "docker buildx imagetools inspect ghcr.io/dexidp/dex@$new_digest --format {{json .Image}}" "$case_dir/commands.log" >/dev/null ||
+    fail 'image labels were not read from the resolved immutable digest'
+grep -Fx DEX_X_MOD_VERSION=v0.40.0 "$case_dir/repo/versions.env" >/dev/null || fail 'x/mod security floor was downgraded'
+grep -Fx DEX_API_GRPC_VERSION=v1.82.1 "$case_dir/repo/versions.env" >/dev/null || fail 'gRPC security floor was downgraded'
 FIXTURE_VERSION=master run_lock_verification "$case_dir"
 # A changed locked runtime version must fail even if the image digest is valid.
 sed "s/DEX_SERVER_VERSION=.*/DEX_SERVER_VERSION=v2.99.0-20260806171424-bbbbbbbb/" "$case_dir/repo/versions.env" >"$case_dir/changed.env"
@@ -318,6 +329,16 @@ prepare_repository "$case_dir/repo" 'header base
 header overlay'
 expect_failure "$case_dir" 'Dex image version label is missing or inconsistent' \
 	env FIXTURE_VERSION=v2.46.0
+
+case_dir=$(make_case advanced-security-baselines)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+FIXTURE_SOURCE_X_MOD=v0.42.0 FIXTURE_SOURCE_GRPC=v1.84.0 make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+run_update "$case_dir" env
+for expected in DEX_BASE_X_MOD_VERSION=v0.42.0 DEX_X_MOD_VERSION=v0.42.0 DEX_BASE_API_GRPC_VERSION=v1.84.0 DEX_API_GRPC_VERSION=v1.84.0; do
+    grep -Fx "$expected" "$case_dir/repo/versions.env" >/dev/null || fail "missing $expected"
+done
 
 case_dir=$(make_case inventory-change)
 make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
@@ -516,16 +537,18 @@ update_workflow=$repo/.github/workflows/update-upstream.yml
 ci_workflow=$repo/.github/workflows/ci.yml
 verify_job=$tmp/update-verify-job.yml
 validate_job=$tmp/update-validate-job.yml
+arm64_job=$tmp/update-arm64-job.yml
 publish_job=$tmp/update-publish-job.yml
 verify_checkout=$tmp/update-verify-checkout.yml
 validate_checkout=$tmp/update-validate-checkout.yml
 publish_precheck=$tmp/update-publish-precheck.yml
 sed -n '/^  verify:/,/^  validate:/p' "$update_workflow" >"$verify_job"
-sed -n '/^  validate:/,/^  publish:/p' "$update_workflow" >"$validate_job"
+sed -n '/^  validate:/,/^  verify-arm64:/p' "$update_workflow" >"$validate_job"
+sed -n '/^  verify-arm64:/,/^  publish:/p' "$update_workflow" >"$arm64_job"
 sed -n '/^  publish:/,$p' "$update_workflow" >"$publish_job"
 sed -n '/- name: Check out repository without persisted credentials/,/- name: Read locked tool versions/p' "$verify_job" >"$verify_checkout"
 sed -n '/- name: Check out verified base without persisted credentials/,/- name: Download verified prepared update/p' "$validate_job" >"$validate_checkout"
-sed -n '/- name: Pre-check immutable artifact binding/,/- name: Check out validated base without persisted credentials/p' "$publish_job" >"$publish_precheck"
+sed -n '/- name: Pre-check immutable artifact binding/,/- name: Upload validated update artifact/p' "$publish_job" >"$publish_precheck"
 
 grep -Fx 'permissions: {}' "$update_workflow" >/dev/null ||
 	fail 'update workflow must deny permissions by default'
@@ -550,12 +573,29 @@ if grep -E ': write|GH_TOKEN|gh auth setup-git|git push|gh pr create' "$validate
 fi
 grep -F 'token: ${{ github.token }}' "$validate_checkout" >/dev/null ||
 	fail 'read-only validator checkout does not use its explicit job token'
-grep -F 'needs: validate' "$publish_job" >/dev/null ||
+grep -F 'needs: [validate, verify-arm64]' "$publish_job" >/dev/null ||
 	fail 'update publisher does not depend on read-only artifact validation'
-grep -F 'contents: write' "$publish_job" >/dev/null ||
-	fail 'update publisher lacks contents write permission'
-grep -F 'pull-requests: write' "$publish_job" >/dev/null ||
-	fail 'update publisher lacks pull-request write permission'
+grep -F "needs.verify-arm64.result == 'success'" "$publish_job" >/dev/null ||
+    fail 'update publisher does not require a successful native arm64 build'
+grep -F 'needs: [verify, validate]' "$arm64_job" >/dev/null &&
+    grep -F 'runs-on: ubuntu-24.04-arm' "$arm64_job" >/dev/null &&
+    grep -F 'contents: read' "$arm64_job" >/dev/null &&
+    grep -F 'artifact-ids: ${{ needs.validate.outputs.artifact_id }}' "$arm64_job" >/dev/null &&
+    grep -F 'ref: ${{ needs.verify.outputs.base_commit }}' "$arm64_job" >/dev/null &&
+    grep -F 'EXPECTED_PATCH_SHA256' "$arm64_job" >/dev/null &&
+    grep -F 'run: scripts/fetch-sources.sh' "$arm64_job" >/dev/null &&
+    grep -F 'git apply --check' "$arm64_job" >/dev/null &&
+    grep -F 'git apply --index' "$arm64_job" >/dev/null &&
+    grep -F 'docker buildx build --platform linux/arm64 --load' "$arm64_job" >/dev/null ||
+    fail 'native arm64 job is not bound to the validated base and artifact'
+if grep -E ': write|GH_TOKEN|gh auth setup-git|git push|gh pr create' "$arm64_job" >/dev/null; then
+    fail 'native arm64 job has write authority or lifecycle commands'
+fi
+grep -F 'contents: read' "$publish_job" >/dev/null ||
+    fail 'validated artifact publisher lacks read-only contents permission'
+if grep -E ': write|GH_TOKEN|gh auth setup-git|git push|gh pr create' "$update_workflow" >/dev/null; then
+    fail 'upstream artifact workflow has repository write authority or lifecycle commands'
+fi
 
 checkout_count=$(grep -c 'uses: actions/checkout@' "$update_workflow")
 nonpersistent_checkout_count=$(grep -c 'persist-credentials: false' "$update_workflow")
@@ -583,35 +623,21 @@ grep -F 'unexpected prepared path' "$validate_job" >/dev/null ||
 	fail 'artifact validator lacks the prepared-path allowlist'
 grep -F 'binding_sha256' "$validate_job" >/dev/null ||
 	fail 'artifact validator does not emit a bound validation result'
-grep -F 'Apply and recheck validated patch' "$publish_job" >/dev/null ||
-	fail 'publisher does not recheck the applied patch'
 grep -F 'Pre-check immutable artifact binding' "$publish_job" >/dev/null ||
-	fail 'publisher does not pre-check the immutable artifact binding'
-grep -F 'ref: ${{ needs.validate.outputs.base_commit }}' "$publish_job" >/dev/null ||
-	fail 'publisher checkout is not bound to the read-only validation result'
+    fail 'publisher does not pre-check the immutable artifact binding'
 grep -F 'artifact-ids: ${{ needs.validate.outputs.artifact_id }}' "$publish_job" >/dev/null ||
-	fail 'publisher download is not bound to the validated artifact ID'
+    fail 'publisher download is not bound to the validated artifact ID'
+grep -F 'uses: actions/upload-artifact@' "$publish_job" >/dev/null &&
+    grep -F 'retention-days: 14' "$publish_job" >/dev/null &&
+    grep -F 'GITHUB_STEP_SUMMARY' "$publish_job" >/dev/null ||
+    fail 'publisher does not retain and summarize the validated proposal'
 
-validation_job_line=$(grep -n -x '  validate:' "$update_workflow" | cut -d: -f1)
-publish_job_line=$(grep -n -x '  publish:' "$update_workflow" | cut -d: -f1)
-validation_line=$(grep -n -F -- '- name: Validate prepared update' "$validate_job" | cut -d: -f1)
 download_line=$(grep -n -F -- '- name: Download validated prepared update' "$publish_job" | cut -d: -f1)
 precheck_line=$(grep -n -F -- '- name: Pre-check immutable artifact binding' "$publish_job" | cut -d: -f1)
-checkout_line=$(grep -n -F -- '- name: Check out validated base without persisted credentials' "$publish_job" | cut -d: -f1)
-recheck_line=$(grep -n -F -- '- name: Apply and recheck validated patch' "$publish_job" | cut -d: -f1)
-credential_line=$(grep -n -F -- '- name: Configure write credentials' "$publish_job" | cut -d: -f1)
-branch_line=$(grep -n -F -- '- name: Create and push update branch' "$publish_job" | cut -d: -f1)
-[ -n "$validation_job_line" ] && [ -n "$publish_job_line" ] &&
-	[ "$validation_job_line" -lt "$publish_job_line" ] ||
-	fail 'write-permission job exists before read-only artifact validation'
-[ -n "$validation_line" ] && [ -n "$download_line" ] && [ -n "$precheck_line" ] &&
-	[ -n "$checkout_line" ] && [ -n "$recheck_line" ] && [ -n "$credential_line" ] &&
-	[ -n "$branch_line" ] ||
-	fail 'update publisher lifecycle steps are incomplete'
-[ "$download_line" -lt "$precheck_line" ] && [ "$precheck_line" -lt "$checkout_line" ] &&
-	[ "$checkout_line" -lt "$recheck_line" ] && [ "$recheck_line" -lt "$credential_line" ] &&
-	[ "$credential_line" -lt "$branch_line" ] ||
-	fail 'publisher checkout, patch application, or credentials precede required binding gates'
+upload_line=$(grep -n -F -- '- name: Upload validated update artifact' "$publish_job" | cut -d: -f1)
+[ -n "$download_line" ] && [ -n "$precheck_line" ] && [ -n "$upload_line" ] &&
+    [ "$download_line" -lt "$precheck_line" ] && [ "$precheck_line" -lt "$upload_line" ] ||
+    fail 'validated artifact publication precedes the immutable binding gate'
 grep -F 'EXPECTED_ARTIFACT_ID' "$publish_precheck" >/dev/null &&
 	grep -F 'EXPECTED_BASE_COMMIT' "$publish_precheck" >/dev/null &&
 	grep -F 'EXPECTED_BINDING_SHA256' "$publish_precheck" >/dev/null &&
@@ -620,7 +646,7 @@ grep -F 'EXPECTED_ARTIFACT_ID' "$publish_precheck" >/dev/null &&
 	grep -F 'sha256sum "$report"' "$publish_precheck" >/dev/null &&
 	grep -F 'sha256sum "$manifest"' "$publish_precheck" >/dev/null &&
 	grep -F 'git apply --numstat -z "$patch" > "$numstat"' "$publish_precheck" >/dev/null &&
-	grep -F 'unexpected prepared path before checkout' "$publish_precheck" >/dev/null &&
+	grep -F 'unexpected prepared path before publication' "$publish_precheck" >/dev/null &&
 	grep -F -- '- New commit:' "$publish_precheck" >/dev/null &&
 	grep -F -- '- New digest:' "$publish_precheck" >/dev/null &&
 	grep -F -- '- Generated manifest digest:' "$publish_precheck" >/dev/null ||

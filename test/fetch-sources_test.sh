@@ -22,11 +22,11 @@ digest() {
 	fi
 }
 
-dex_commit=ab64ed778070e983cbb10cfc07ea4bb397d14312
+dex_commit=b02ead0ba87a320f3328c6860ea45f5b6314e6bd
 dex_root="$tmp/dex-tree/dex-$dex_commit"
 mkdir -p "$dex_root/web/templates" "$dex_root/api/v2"
-printf 'module github.com/dexidp/dex/v2\n\nrequire (\n\tgolang.org/x/mod v0.37.0 // indirect\n)\n' >"$dex_root/go.mod"
-printf 'module github.com/dexidp/dex/api/v2\n\nrequire (\n\tgoogle.golang.org/grpc v1.82.0\n)\n' >"$dex_root/api/v2/go.mod"
+printf 'module github.com/dexidp/dex/v2\n\nrequire (\n\tgolang.org/x/mod v0.42.0 // indirect\n)\n' >"$dex_root/go.mod"
+printf 'module github.com/dexidp/dex/api/v2\n\nrequire (\n\tgoogle.golang.org/grpc v1.84.0\n)\n' >"$dex_root/api/v2/go.mod"
 for template in \
 	approval.html \
 	device.html \
@@ -135,7 +135,7 @@ if FETCH_CACHE="$tmp/cache" VERSIONS_FILE="$tmp/fixture.env" \
 fi
 grep -F 'Dex source checksum mismatch' "$tmp/dex-error"
 
-sed 's|golang.org/x/mod v0.37.0|golang.org/x/mod v0.99.0|' \
+sed 's|golang.org/x/mod v0.42.0|golang.org/x/mod v0.99.0|' \
 	"$dex_root/go.mod" >"$dex_root/go.mod.changed"
 mv "$dex_root/go.mod.changed" "$dex_root/go.mod"
 baseline_archive="$tmp/dex-baseline-changed.tar.gz"

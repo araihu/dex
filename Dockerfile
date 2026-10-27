@@ -1,4 +1,4 @@
-FROM ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b AS upstream
+FROM ghcr.io/dexidp/dex:master@sha256:3cea00341c073adcf45b6f8ae9d3c26e5e1201316e3a5793c9129d8373f7bee6 AS upstream
 
 FROM golang:1.27.3-alpine3.24@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS builder
 
@@ -21,8 +21,7 @@ RUN . /tmp/versions.env \
     && GOWORK=off go get "google.golang.org/grpc@$DEX_API_GRPC_VERSION" \
     && GOWORK=off go mod tidy
 RUN . /tmp/versions.env \
-    && dex_version=${DEX_IMAGE#*:} \
-    && dex_version=${dex_version%@*} \
+    && dex_version=$DEX_SERVER_VERSION \
     && CGO_ENABLED=1 GOFLAGS=-trimpath GOWORK=off go build \
       -ldflags "-w -X main.version=$dex_version -extldflags '-static'" \
       -o /go/bin/dex ./cmd/dex \

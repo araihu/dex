@@ -2,7 +2,7 @@
 set -eu
 
 image=${1:?usage: image-overlay_test.sh IMAGE}
-upstream='ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b'
+upstream='ghcr.io/dexidp/dex:master@sha256:3cea00341c073adcf45b6f8ae9d3c26e5e1201316e3a5793c9129d8373f7bee6'
 tmp=$(mktemp -d)
 upstream_container=
 derived_container=

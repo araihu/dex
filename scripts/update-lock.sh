@@ -264,6 +264,8 @@ old_image=$(lock_value DEX_IMAGE)
 old_source_url=$(lock_value DEX_SOURCE_URL)
 source_filename=$(lock_value DEX_SOURCE_FILENAME)
 old_source_hash=$(lock_value DEX_SOURCE_SHA256)
+old_server_version=$(lock_value DEX_SERVER_VERSION)
+require_pseudo_version "$old_server_version"
 require_commit "$old_commit" DEX_COMMIT
 case "$old_image" in
 	"$official_image"@*) old_digest=${old_image#*@} ;;
@@ -390,7 +392,29 @@ jq -e \
 	)] | length > 0
 ' "$work/provenance.json" >/dev/null || die 'official Dex provenance identity mismatch'
 
+# Branch image labels may say "master" while the binary has a precise version.
+# Only execute the image after verifying its immutable signature and provenance.
+image_version=$(printf '%s\n' "$image_json" | jq -er '
+	.["linux/amd64"].config.Labels["org.opencontainers.image.version"] as $amd64
+	| .["linux/arm64"].config.Labels["org.opencontainers.image.version"] as $arm64
+	| if $amd64 == $arm64 and ($amd64 | type) == "string" then $amd64 else empty end
+') || die 'Dex image version label is missing or inconsistent'
+if [ "$image_version" = master ]; then
+	version_output=$(docker run --rm --entrypoint /usr/local/bin/dex "$new_image" version) ||
+		die 'cannot read verified Dex binary version'
+	new_server_version=$(printf '%s\n' "$version_output" | sed -n 's/^Dex Version: //p')
+	require_pseudo_version "$new_server_version"
+	case "$new_server_version" in
+		*-"$(printf '%.8s' "$new_commit")") ;;
+		*) die 'Dex binary version does not match resolved Dex commit' ;;
+	esac
+else
+	require_pseudo_version "$image_version"
+	new_server_version=$image_version
+fi
+
 if [ "$mode" = verify ]; then
+	[ "$new_server_version" = "$old_server_version" ] || die 'Dex binary version does not match locked server version'
 	assert_git_metadata_unchanged
 	printf '%s\n' "update-lock: verified Dex $new_commit ($new_digest)"
 	exit 0
@@ -467,6 +491,7 @@ write_prefixed_line "$stage_lock" 'DEX_BASE_API_GRPC_VERSION=' "DEX_BASE_API_GRP
 write_prefixed_line "$stage_lock" 'DEX_API_GRPC_VERSION=' "DEX_API_GRPC_VERSION=$new_api_grpc"
 write_prefixed_line "$stage_lock" 'DEX_COMMIT=' "DEX_COMMIT=$new_commit"
 write_prefixed_line "$stage_lock" 'DEX_IMAGE=' "DEX_IMAGE=$new_image"
+write_prefixed_line "$stage_lock" 'DEX_SERVER_VERSION=' "DEX_SERVER_VERSION=$new_server_version"
 write_prefixed_line "$stage_lock" 'DEX_SOURCE_URL=' "DEX_SOURCE_URL=$new_source_url"
 write_prefixed_line "$stage_lock" 'DEX_SOURCE_SHA256=' "DEX_SOURCE_SHA256=$new_source_hash"
 old_from=$(sed -n '1p' "$stage/Dockerfile")

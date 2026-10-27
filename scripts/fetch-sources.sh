@@ -12,6 +12,7 @@ lock_file=${VERSIONS_FILE:-${FETCH_VERSIONS:-$repo/versions.env}}
 
 DEX_COMMIT=
 DEX_IMAGE=
+DEX_SERVER_VERSION=
 DEX_SOURCE_URL=
 DEX_SOURCE_FILENAME=
 DEX_SOURCE_SHA256=
@@ -81,6 +82,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 	case "$key" in
 		DEX_COMMIT) DEX_COMMIT=$value ;;
 		DEX_IMAGE) DEX_IMAGE=$value ;;
+		DEX_SERVER_VERSION) DEX_SERVER_VERSION=$value ;;
 		DEX_SOURCE_URL) DEX_SOURCE_URL=$value ;;
 		DEX_SOURCE_FILENAME) DEX_SOURCE_FILENAME=$value ;;
 		DEX_SOURCE_SHA256) DEX_SOURCE_SHA256=$value ;;
@@ -159,6 +161,7 @@ case "$DEX_COMMIT" in
 esac
 [ "${#DEX_COMMIT}" -eq 40 ] || die "DEX_COMMIT must be a 40-character commit SHA"
 require_value DEX_IMAGE "$DEX_IMAGE"
+require_value DEX_SERVER_VERSION "$DEX_SERVER_VERSION"
 require_value DEX_SOURCE_URL "$DEX_SOURCE_URL"
 require_value DEX_SOURCE_FILENAME "$DEX_SOURCE_FILENAME"
 case "$DEX_SOURCE_FILENAME" in

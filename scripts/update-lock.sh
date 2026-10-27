@@ -103,6 +103,28 @@ require_pseudo_version() {
 		>/dev/null || die 'Dex image version label must be a lowercase pseudo-version'
 }
 
+# Only stable module versions are eligible for automated proposals. Keep the
+# reviewed security floor when upstream is older, and never downgrade a newer
+# upstream dependency back to that floor.
+newer_module_version() {
+    printf '%s\n' "$1" "$2" | jq -Rser '
+        split("\n") | map(select(length > 0))
+        | map(select(test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")))
+        | if length != 2 then error("expected two stable module versions")
+          else max_by(ltrimstr("v") | split(".") | map(tonumber)) end
+    ' || die 'cannot compare stable dependency versions'
+}
+
+archive_module_version() {
+    member=$1
+    module=$2
+    tar -xOzf "$new_archive" "dex-$new_commit/$member" > "$work/module.go.mod" ||
+        die "cannot read updated $member"
+    count=$(awk -v module="$module" '$1 == module { count++ } END { print count + 0 }' "$work/module.go.mod")
+    [ "$count" -eq 1 ] || die "updated $module baseline is missing or duplicated"
+    awk -v module="$module" '$1 == module { print $2; exit }' "$work/module.go.mod"
+}
+
 hash_file() {
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum "$1" | awk '{print $1}'
@@ -433,7 +455,16 @@ done
 mkdir -p "$stage/.cache/sources/downloads"
 cp "$new_archive" "$stage/.cache/sources/downloads/$source_filename"
 
+new_base_x_mod=$(archive_module_version go.mod golang.org/x/mod)
+new_base_api_grpc=$(archive_module_version api/v2/go.mod google.golang.org/grpc)
+new_x_mod=$(newer_module_version "$(lock_value DEX_X_MOD_VERSION)" "$new_base_x_mod")
+new_api_grpc=$(newer_module_version "$(lock_value DEX_API_GRPC_VERSION)" "$new_base_api_grpc")
+
 stage_lock=$stage/versions.env
+write_prefixed_line "$stage_lock" 'DEX_BASE_X_MOD_VERSION=' "DEX_BASE_X_MOD_VERSION=$new_base_x_mod"
+write_prefixed_line "$stage_lock" 'DEX_X_MOD_VERSION=' "DEX_X_MOD_VERSION=$new_x_mod"
+write_prefixed_line "$stage_lock" 'DEX_BASE_API_GRPC_VERSION=' "DEX_BASE_API_GRPC_VERSION=$new_base_api_grpc"
+write_prefixed_line "$stage_lock" 'DEX_API_GRPC_VERSION=' "DEX_API_GRPC_VERSION=$new_api_grpc"
 write_prefixed_line "$stage_lock" 'DEX_COMMIT=' "DEX_COMMIT=$new_commit"
 write_prefixed_line "$stage_lock" 'DEX_IMAGE=' "DEX_IMAGE=$new_image"
 write_prefixed_line "$stage_lock" 'DEX_SOURCE_URL=' "DEX_SOURCE_URL=$new_source_url"
@@ -485,6 +516,8 @@ report=$work/update-report.md
 	printf '%s\n' '## Dex upstream update'
 	printf '\n- Old commit: `%s`\n' "$old_commit"
 	printf -- '- New commit: `%s`\n' "$new_commit"
+	printf -- '- x/mod: upstream `%s`, security overlay `%s`\n' "$new_base_x_mod" "$new_x_mod"
+	printf -- '- API gRPC: upstream `%s`, security overlay `%s`\n' "$new_base_api_grpc" "$new_api_grpc"
 	printf -- '- New image: `%s`\n' "$new_image"
 	printf -- '- Old digest: `%s`\n' "$old_digest"
 	printf -- '- New digest: `%s`\n' "$new_digest"

@@ -52,7 +52,10 @@ make_archive() {
 	if [ -n "$extra" ]; then
 		printf '%s\n' '<section>unexpected</section>' >"$root/$extra"
 	fi
-	tar -czf "$archive" -C "$tree" "dex-$commit"
+	mkdir -p "$tree/dex-$commit/api/v2"
+    printf 'module github.com/dexidp/dex/v2\nrequire (\n golang.org/x/mod %s\n)\n' "${FIXTURE_SOURCE_X_MOD:-v0.37.0}" > "$tree/dex-$commit/go.mod"
+    printf 'module github.com/dexidp/dex/api/v2\nrequire (\n google.golang.org/grpc %s\n)\n' "${FIXTURE_SOURCE_GRPC:-v1.82.0}" > "$tree/dex-$commit/api/v2/go.mod"
+    tar -czf "$archive" -C "$tree" "dex-$commit"
 }
 
 write_executable() {
@@ -168,6 +171,10 @@ DEX_IMAGE=$locked_image
 DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$locked_commit.tar.gz
 DEX_SOURCE_FILENAME=dex.tar.gz
 DEX_SOURCE_SHA256=$old_archive_hash
+DEX_BASE_X_MOD_VERSION=v0.37.0
+DEX_X_MOD_VERSION=v0.40.0
+DEX_BASE_API_GRPC_VERSION=v1.82.0
+DEX_API_GRPC_VERSION=v1.82.1
 EOF
 	printf 'FROM %s%s\n' "$locked_image" "$from_suffix" >"$root/Dockerfile"
 	printf '%s\n' "$current_header" >"$root/src/header.html"
@@ -286,6 +293,19 @@ grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/versi
     fail 'master image was not pinned by digest'
 grep -F "docker buildx imagetools inspect ghcr.io/dexidp/dex@$new_digest --format {{json .Image}}" "$case_dir/commands.log" >/dev/null ||
     fail 'image labels were not read from the resolved immutable digest'
+
+grep -Fx DEX_X_MOD_VERSION=v0.40.0 "$case_dir/repo/versions.env" >/dev/null || fail 'x/mod security floor was downgraded'
+grep -Fx DEX_API_GRPC_VERSION=v1.82.1 "$case_dir/repo/versions.env" >/dev/null || fail 'gRPC security floor was downgraded'
+
+case_dir=$(make_case advanced-security-baselines)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+FIXTURE_SOURCE_X_MOD=v0.42.0 FIXTURE_SOURCE_GRPC=v1.84.0 make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+run_update "$case_dir" env
+for expected in DEX_BASE_X_MOD_VERSION=v0.42.0 DEX_X_MOD_VERSION=v0.42.0 DEX_BASE_API_GRPC_VERSION=v1.84.0 DEX_API_GRPC_VERSION=v1.84.0; do
+    grep -Fx "$expected" "$case_dir/repo/versions.env" >/dev/null || fail "missing $expected"
+done
 
 case_dir=$(make_case inventory-change)
 make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'

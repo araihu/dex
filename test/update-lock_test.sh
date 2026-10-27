@@ -90,6 +90,9 @@ prepare_fake_commands() {
 		'    version=${FIXTURE_VERSION:-$FIXTURE_NEW_VERSION}' \
 		'    printf "{\"linux/amd64\":{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"%s\",\"org.opencontainers.image.version\":\"%s\"}}},\"linux/arm64\":{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"%s\",\"org.opencontainers.image.version\":\"%s\"}}}}\n" "$revision" "$version" "$revision" "$version"' \
 		'    ;;' \
+		'  "run --rm --entrypoint /usr/local/bin/dex "*)' \
+		'    printf "Dex Version: %s\n" "${FIXTURE_BINARY_VERSION:-$FIXTURE_NEW_VERSION}"' \
+		'    ;;' \
 		'  *"buildx build"*)' \
 		'    while [ "$#" -gt 0 ]; do' \
 		'      if [ "$1" = --iidfile ]; then printf "%s\n" sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc >"$2"; exit 0; fi' \
@@ -103,6 +106,7 @@ prepare_fake_commands() {
 		'#!/bin/sh' \
 		'set -eu' \
 		'printf "cosign %s\n" "$*" >>"$UPDATE_TEST_LOG"' \
+		'[ "${FIXTURE_COSIGN_FAIL:-false}" != true ] || exit 1' \
 		'if [ "$1" = verify-attestation ]; then' \
 		'  statement=$(jq -cn --arg commit "$FIXTURE_NEW_COMMIT" --arg digest "${FIXTURE_NEW_DIGEST#sha256:}" '\''{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"ghcr.io/dexidp/dex","digest":{"sha256":$digest}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"externalParameters":{"workflow":{"repository":"https://github.com/dexidp/dex","ref":"refs/heads/master"}},"resolvedDependencies":[{"uri":"git+https://github.com/dexidp/dex@refs/heads/master","digest":{"gitCommit":$commit}}]},"runDetails":{"builder":{"id":"https://github.com/dexidp/dex/.github/workflows/artifacts.yaml@refs/heads/master"}}}}'\'')' \
 		'  payload=$(printf "%s" "$statement" | base64 | tr -d "\n")' \
@@ -165,6 +169,7 @@ prepare_repository() {
 	cat >"$root/versions.env" <<EOF
 DEX_COMMIT=$locked_commit
 DEX_IMAGE=$locked_image
+DEX_SERVER_VERSION=$new_version
 DEX_SOURCE_URL=https://github.com/dexidp/dex/archive/$locked_commit.tar.gz
 DEX_SOURCE_FILENAME=dex.tar.gz
 DEX_SOURCE_SHA256=$old_archive_hash
@@ -259,6 +264,44 @@ make_case() {
 	printf '%s\n' "$new_version" >"$case_dir/new-version"
 	printf '%s\n' "$case_dir"
 }
+
+case_dir=$(make_case master-version-label)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+run_update "$case_dir" env FIXTURE_VERSION=master
+grep -Fx "DEX_IMAGE=ghcr.io/dexidp/dex:master@$new_digest" "$case_dir/repo/versions.env" >/dev/null ||
+	fail 'branch image was not pinned to its immutable digest'
+grep -Fx "DEX_SERVER_VERSION=$new_version" "$case_dir/repo/versions.env" >/dev/null ||
+	fail 'branch image did not record its exact binary version'
+FIXTURE_VERSION=master run_lock_verification "$case_dir"
+# A changed locked runtime version must fail even if the image digest is valid.
+sed "s/DEX_SERVER_VERSION=.*/DEX_SERVER_VERSION=v2.99.0-20260806171424-bbbbbbbb/" "$case_dir/repo/versions.env" >"$case_dir/changed.env"
+cp "$case_dir/changed.env" "$case_dir/repo/versions.env"
+if FIXTURE_VERSION=master run_lock_verification "$case_dir"; then
+	fail 'lock verification accepted a mismatched binary version'
+fi
+grep -F 'Dex binary version does not match locked server version' "$case_dir/stderr" >/dev/null
+
+case_dir=$(make_case unsigned-branch-image)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+expect_failure "$case_dir" 'official Dex image signature verification failed' \
+	env FIXTURE_VERSION=master FIXTURE_COSIGN_FAIL=true
+if grep -F 'docker run ' "$case_dir/commands.log" >/dev/null; then
+	fail 'executed a branch image before verifying its signature'
+fi
+
+case_dir=$(make_case binary-commit-mismatch)
+make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+make_archive "$new_commit" "$case_dir/new.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'
+prepare_repository "$case_dir/repo" 'header base
+header overlay'
+expect_failure "$case_dir" 'Dex binary version does not match resolved Dex commit' \
+	env FIXTURE_VERSION=master FIXTURE_BINARY_VERSION=v2.46.0-20260806171424-aaaaaaaa
 
 case_dir=$(make_case revision-mismatch)
 make_archive "$old_commit" "$case_dir/old.tar.gz" 'header base' 'footer base' 'const webauthn = "same";'

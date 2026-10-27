@@ -1,6 +1,6 @@
 # AraiHu Dex
 
-AraiHu-maintained frontend overlay for a locked official Dex prerelease image.
+AraiHu-maintained frontend overlay for a locked official Dex image.
 It preserves Dex authentication behavior, native branding hooks, flow
 templates, TOTP, and WebAuthn logic while adding released Goshtoso themes and
 optional AraiHu assets. The final stage remains based on the official image,
@@ -50,15 +50,16 @@ fixture lock. The script never reads sibling checkouts or copies unverified
 source files.
 
 The current base is exactly
-`ghcr.io/dexidp/dex:v2.46.0-20260806171424-ab64ed77@sha256:af9469509350ff3f6ca70127175a58e5ab085b9d18740fa4a590d9f03f0a026b`.
-The generic `:master` tag is not an accepted build contract.
-Lock-only verification accepts that one immutable prerelease as an alias for
-the same official `master`-workflow signature and provenance identity. Update
-preparation accepts this prerelease as its initial baseline, resolves the next
-verified `master` commit and digest, reads the official
-`org.opencontainers.image.version` pseudo-version, and writes that version tag
-with the digest as the lock. It never follows the mutable tag in the
-Dockerfile.
+`ghcr.io/dexidp/dex:master@sha256:3cea00341c073adcf45b6f8ae9d3c26e5e1201316e3a5793c9129d8373f7bee6`,
+from source commit `b02ead0ba87a320f3328c6860ea45f5b6314e6bd`.
+The digest is mandatory; an unpinned `:master` tag is not an accepted build
+contract. `DEX_SERVER_VERSION=v2.47.0-20261026150406-b02ead0b` separately records
+the exact runtime version, because official branch images now use `master` as
+their OCI version label. After verifying the official image's signature and
+provenance, update preparation reads `dex version` from that immutable image,
+checks its commit suffix, and locks the runtime version used by rebuilt binaries.
+Lock-only verification also checks that runtime version. Official pseudo-version
+image labels remain supported.
 
 Dex and its entrypoint are rebuilt from that exact source archive. Gomplate is
 rebuilt from its exact `v5.2.0` commit. Neither source tree carries an AraiHu
